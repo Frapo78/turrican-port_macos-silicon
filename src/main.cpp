@@ -122,6 +122,7 @@ public:
   bool sjoy[5] = {};  // scripted joystick
   bool kjoy[5] = {};  // keyboard joystick
   bool pad_held_key[128] = {};
+  int autofire_phase_ = 0;  // frame counter for X-button auto-fire pulse
 
   bool init(int scale) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -217,18 +218,31 @@ public:
     constexpr int dead = 12000;
     int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
     int ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+    // Analog stick + D-pad → digital joystick directions.
     up |= ly < -dead || btn(SDL_CONTROLLER_BUTTON_DPAD_UP);
     down |= ly > dead || btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN);
     left |= lx < -dead || btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT);
     right |= lx > dead || btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
-    fire |= btn(SDL_CONTROLLER_BUTTON_A);
-    // Other buttons send keys (held while the button is held).
+    // A = jump (joystick up). Does not affect the fire line.
+    if (btn(SDL_CONTROLLER_BUTTON_A)) up = true;
+    // Y = regular fire (short press / hold = surround as the game already does).
+    // Instant surround would need a game-code poke; leave as plain fire.
+    if (btn(SDL_CONTROLLER_BUTTON_Y)) fire = true;
+    // X = auto-fire: pulse the fire button (~12 Hz) so the game sees brief
+    // taps instead of a continuous hold (which would engage surround).
+    if (btn(SDL_CONTROLLER_BUTTON_X)) {
+      autofire_phase_ = (autofire_phase_ + 1) % 8;
+      if (autofire_phase_ < 3) fire = true;
+    } else {
+      autofire_phase_ = 0;
+    }
+    // Buttons that synthesize Amiga keyboard events (held while pressed).
+    // B = secondary (Space → powerline / gyro when combined with down).
+    // Back = Esc (quit to intro). Start / shoulders kept as useful extras.
     static const struct { SDL_GameControllerButton b; int key; } map[] = {
-        {SDL_CONTROLLER_BUTTON_B, 0x40},       // Space
-        {SDL_CONTROLLER_BUTTON_X, 0x44},       // Return
-        {SDL_CONTROLLER_BUTTON_Y, 0x41},       // Backspace
-        {SDL_CONTROLLER_BUTTON_START, 0x59},   // F10
-        {SDL_CONTROLLER_BUTTON_BACK, 0x45},    // Esc
+        {SDL_CONTROLLER_BUTTON_B, 0x40},              // Space (powerline / 2nd fire)
+        {SDL_CONTROLLER_BUTTON_BACK, 0x45},           // Esc
+        {SDL_CONTROLLER_BUTTON_START, 0x59},          // F10
         {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 0x50},   // F1
         {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0x51},  // F2
     };
@@ -386,7 +400,9 @@ void usage() {
           "  --script FILE    scripted input (see source)\n"
           "  --grab           capture the mouse at start (F12 toggles)\n"
           "keys: cursor keys/right Ctrl = joystick, F11 fullscreen,\n"
-          "      Pause fast-forward; all other keys go to the game.\n");
+          "      Pause fast-forward; all other keys go to the game.\n"
+          "pad:  left stick/D-pad = move, A = jump, Y = fire, X = auto-fire,\n"
+          "      B = Space (powerline), Back = Esc.\n");
 }
 
 }  // namespace

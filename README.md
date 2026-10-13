@@ -31,8 +31,13 @@ cmake --build build
 
 | Input | Function |
 |-------|----------|
-| Cursor keys / game controller | joystick in port 2 |
-| Right Ctrl / controller A | fire |
+| Cursor keys / left stick / D-pad | joystick in port 2 (move / jump / duck) |
+| Right Ctrl / gamepad **Y** | fire (hold = surround shot) |
+| Gamepad **A** | jump (joystick up) |
+| Gamepad **X** | auto-fire (pulsed fire taps) |
+| Gamepad **B** / Space | powerline (secondary); down+B = gyroscope |
+| Gamepad **Back** / Esc | quit to intro |
+| Ctrl | pause (fire to resume) |
 | F11 | fullscreen |
 | Pause | fast forward |
 
