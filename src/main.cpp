@@ -3,6 +3,7 @@
 
 #include <SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -366,6 +367,8 @@ public:
       fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
       return false;
     }
+    // Window height ≈ 15/16 of the line count so 320×256 lores sits near 4:3;
+    // logical size stays 320×256 and SDL letterboxes inside the window.
     win = SDL_CreateWindow("Turrican II", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                            amiga::FB_W * scale, amiga::VIEW_H * scale * 15 / 16,
                            SDL_WINDOW_RESIZABLE);
@@ -373,8 +376,7 @@ public:
     ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
-    // PAL lores pixels are slightly wider than tall (a 320×256 frame is 4:3).
-    SDL_RenderSetLogicalSize(ren, amiga::FB_W, amiga::VIEW_H * 15 / 16);
+    SDL_RenderSetLogicalSize(ren, amiga::FB_W, amiga::VIEW_H);
     tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
                             amiga::FB_W, amiga::VIEW_H);
     SDL_AudioSpec want{}, have{};
@@ -514,12 +516,57 @@ public:
     }
   }
 
+  // Host-only workaround: the game programs a shorter DIW than 256 lines, so
+  // the emulated framebuffer is top-aligned with black below the HUD.  Shift
+  // the non-black band to the vertical centre of the 256-line buffer.  Bounds
+  // are sticky (hysteresis) to avoid jitter when a row flickers.
+  void center_active_region(uint32_t* fb) {
+    auto row_mostly_black = [&](int y) {
+      const uint32_t* row = fb + y * amiga::FB_W;
+      int lit = 0;
+      for (int x = 0; x < amiga::FB_W; x += 2) {
+        // Ignore very dark pixels (border / clear colour).
+        if ((row[x] & 0x00F8F8F8u) != 0) ++lit;
+      }
+      return lit < 6;
+    };
+    int top = 0, bot = amiga::VIEW_H - 1;
+    while (top < bot && row_mostly_black(top)) ++top;
+    while (bot > top && row_mostly_black(bot)) --bot;
+    // Require a plausible active height; otherwise leave the frame alone
+    // (title screens / loading may be mostly black).
+    int h = bot - top + 1;
+    if (h < 64 || h >= amiga::VIEW_H) return;
+
+    // Sticky bounds: only move if the new band differs by more than 2 lines.
+    if (center_top_ < 0 || (top - center_top_ > 2) || (center_top_ - top > 2) ||
+        (bot - center_bot_ > 2) || (center_bot_ - bot > 2)) {
+      center_top_ = top;
+      center_bot_ = bot;
+    } else {
+      top = center_top_;
+      bot = center_bot_;
+      h = bot - top + 1;
+    }
+    int new_top = (amiga::VIEW_H - h) / 2;
+    if (new_top == top) return;
+
+    static std::vector<uint32_t> tmp;
+    tmp.assign(amiga::FB_W * amiga::VIEW_H, 0u);
+    std::copy(fb + top * amiga::FB_W, fb + (bot + 1) * amiga::FB_W,
+              tmp.begin() + new_top * amiga::FB_W);
+    std::copy(tmp.begin(), tmp.end(), fb);
+  }
+
+  int center_top_ = -1, center_bot_ = -1;
+
   void frame(const uint32_t* fb) override {
     ++frame_no;
     // Mutable copy so the host-side debug overlay can draw without touching
     // the machine's view buffer.
     static std::vector<uint32_t> overlay;
     overlay.assign(fb, fb + amiga::FB_W * amiga::VIEW_H);
+    center_active_region(overlay.data());
     dbg_.draw(overlay.data());
 
     SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
