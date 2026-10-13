@@ -75,10 +75,11 @@ public:
   bool infinite_lives = false;
   bool infinite_energy = false;
   bool god_mode = false;              // also stops the timer
-  // Set by the host every frame while its "surround" button is held (with
-  // the fire line): the surround beam starts at once instead of after 20
-  // frames of holding fire.
+  // Cheat: while the host's surround button is held (with the fire line),
+  // the surround beam starts at once instead of after 20 frames of holding
+  // fire, also where the game would not start it (e.g. in the air).
   bool instant_surround = false;
+  bool surround_held = false;  // set by the host every frame
   void set_cheat_flag(bool on);
   bool cheat_flag() const;
 

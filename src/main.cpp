@@ -24,7 +24,7 @@ namespace {
 //   game <action> [args]: t2::Game actions, as in the debug menu:
 //     warp <world 1-5> <stage 1-3>, lives <n>, addlife, energy, weapon <1-3> <level>,
 //     maxweapons, powerline, bombs <n>, continues <n>, time <n>,
-//     inflives|infenergy|god|cheat <0|1>
+//     inflives|infenergy|god|cheat|surround <0|1>
 //   poke <hexaddr> <hexvalue> [b|w|l]   (force a game variable)
 struct ScriptEvent {
   int frame;
@@ -144,6 +144,7 @@ struct DebugMenu {
     I_CONTINUES,
     I_TIME,
     I_CHEAT,
+    I_SURROUND,
     I_TOGGLE_AUTOFIRE,
     I_TOGGLE_FREEZE,
     I_CENTER_MODE,
@@ -162,7 +163,7 @@ struct DebugMenu {
         I_CENTER_MODE, I_SLOT, I_SAVE, I_LOAD};
     static const std::vector<int> cheat_items = {
         I_BACK, I_LEVEL, I_WEAPON, I_MAX_WEAPONS, I_ADD_LIFE, I_LIVES_99, I_INF_LIVES,
-        I_FULL_ENERGY, I_INF_ENERGY, I_GOD, I_POWER_LINE, I_BOMBS, I_CONTINUES, I_TIME, I_CHEAT};
+        I_FULL_ENERGY, I_INF_ENERGY, I_GOD, I_SURROUND, I_POWER_LINE, I_BOMBS, I_CONTINUES, I_TIME, I_CHEAT};
     return p == P_CHEATS ? cheat_items : main_items;
   }
   const std::vector<int>& items() const { return page_items(page); }
@@ -201,6 +202,10 @@ struct DebugMenu {
         return buf;
       case I_GOD:
         std::snprintf(buf, sizeof(buf), "God mode (no timer): %s", onoff(game && game->god_mode));
+        return buf;
+      case I_SURROUND:
+        std::snprintf(buf, sizeof(buf), "Instant surround (Y): %s",
+                      onoff(game && game->instant_surround));
         return buf;
       case I_POWER_LINE:      return "Refill power line";
       case I_BOMBS:           return "Wheel bombs = 99";
@@ -371,6 +376,10 @@ struct DebugMenu {
         game->god_mode = !game->god_mode;
         if (!game->god_mode) m->w16(t2::var::INVULNERABLE, 0);
         set_status(game->god_mode ? "God mode ON" : "God mode OFF");
+        break;
+      case I_SURROUND:
+        game->instant_surround = !game->instant_surround;
+        set_status(game->instant_surround ? "Instant surround ON (Y)" : "Instant surround OFF");
         break;
       case I_POWER_LINE: game->refill_power_line(); set_status("Power line refilled"); break;
       case I_BOMBS: game->set_bombs(99); set_status("Wheel bombs = 99"); break;
@@ -584,9 +593,9 @@ public:
   bool sjoy[5] = {};  // scripted joystick
   bool kjoy[5] = {};  // keyboard joystick
   bool pad_held_key[128] = {};
-  int autofire_phase_ = 0;
+  int autofire_phase_ = 0;  // frame counter for X-button auto-fire pulse
   bool a_was_ = false, b_was_ = false, start_was_ = false;  // menu button edges
-  bool script_surround_ = false;  // script "surround 1": as if Y were held  // frame counter for X-button auto-fire pulse
+  bool script_surround_ = false;  // script "surround 1": as if Y were held
   DebugMenu dbg_;
   std::string adf_path_;
   std::string save_path_;
@@ -681,7 +690,7 @@ public:
     bool pad_a = false, pad_b = false, pad_start = false, pad_y = false;
     if (pad) poll_gamepad(up, down, left, right, fire, pad_a, pad_b, pad_start, pad_y);
     // Y: surround beam at once (the game needs fire held for 20 frames).
-    if (dbg_.game) dbg_.game->instant_surround = (pad_y || script_surround_) && !dbg_.open;
+    if (dbg_.game) dbg_.game->surround_held = (pad_y || script_surround_) && !dbg_.open;
     if (script_surround_) fire = true;
 
     // Menu buttons act on presses, not while held: a held Start must not
@@ -728,7 +737,8 @@ public:
     out_start = btn(SDL_CONTROLLER_BUTTON_START);
     // A = jump (joystick up). Does not affect the fire line.
     if (out_a && !dbg_.open) up = true;
-    // Y = fire with the surround beam at once (t2::Game::instant_surround).
+    // Y = fire; with the "Instant surround" cheat the beam starts at once
+    // (t2::Game::instant_surround), otherwise after holding it as usual.
     out_y = btn(SDL_CONTROLLER_BUTTON_Y);
     if (out_y) fire = true;
     // X = auto-fire: pulse the fire button (~12 Hz).
@@ -908,6 +918,7 @@ public:
     else if (c == "infenergy") g.infinite_energy = num(1, 1);
     else if (c == "god") g.god_mode = num(1, 1);
     else if (c == "cheat") g.set_cheat_flag(num(1, 1));
+    else if (c == "surround") g.instant_surround = num(1, 1);
     else fprintf(stderr, "script: unknown game command %s\n", c.c_str());
   }
 

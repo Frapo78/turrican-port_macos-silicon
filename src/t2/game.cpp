@@ -133,7 +133,7 @@ void Game::return_hook() {
 void Game::surround_hook() {
   // $DE counts the frames fire has been held (input routine $32FA, which
   // clears it on release); the beam routine compares it with 20 here.
-  if (!instant_surround || !m_.r8(FIRE_HELD) || !main_loaded()) return;
+  if (!instant_surround || !surround_held || !m_.r8(FIRE_HELD) || !main_loaded()) return;
   if (m_.r16(FIRE_FRAMES) < SURROUND_FRAMES) m_.w16(FIRE_FRAMES, SURROUND_FRAMES);
 }
 

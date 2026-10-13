@@ -33,7 +33,7 @@ cmake --build build
 |-------|----------|
 | Cursor keys / left stick / D-pad | joystick in port 2 (move / jump / duck) |
 | Right Ctrl | fire (hold = surround shot after a moment, as in the game) |
-| Gamepad **Y** | fire with the surround shot at once |
+| Gamepad **Y** | fire (hold = surround shot; at once with the *Instant surround* cheat) |
 | Gamepad **A** | jump (joystick up) |
 | Gamepad **X** | auto-fire (pulsed fire taps) |
 | Gamepad **B** / Space | powerline (secondary); down+B = gyroscope |
@@ -65,7 +65,8 @@ and the game's own routines, so the HUD follows):
 - **Weapon** (left/right: Multiple 0–2, Laser 0–4, Rebound 0–3), max all
   weapons
 - extra life, lives = 99, infinite lives, full energy, infinite energy,
-  god mode (no damage; the timer stops too), refill power line, wheel
+  god mode (no damage; the timer stops too), instant surround on Y (also
+  in the air; off by default), refill power line, wheel
   bombs = 99, continues = 5, time = 999, the game's built-in cheat flag
   (no life loss, no score)
 
