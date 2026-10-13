@@ -240,7 +240,6 @@ void Machine::custom_write(uint32_t reg, uint16_t v) {
     case 0x072: cs_.bltdat_[1] = v; return;
     case 0x074: cs_.bltdat_[0] = v; return;
     case 0x080:
-      if (verbose) log("[copper] COP1LC hi=%04x pc=%06x frame %llu\n", v, cpu.op_pc, (unsigned long long)frame_count_);
       cs_.cop1lc_ = (cs_.cop1lc_ & 0xFFFF) | uint32_t(v & 0x1F) << 16; return;
     case 0x082: cs_.cop1lc_ = (cs_.cop1lc_ & 0xFFFF0000) | (v & 0xFFFE); return;
     case 0x084: cs_.cop2lc_ = (cs_.cop2lc_ & 0xFFFF) | uint32_t(v & 0x1F) << 16; return;
@@ -626,11 +625,20 @@ void Machine::blit() {
   cs_.blt_active_ = true;
   cs_.blt_zero_ = true;
   if (blitlog_)
-    log("[blit] frame %llu pc=%06x %dx%d con %04x %04x A %06x B %06x C %06x D %06x "
-        "mod %d %d %d %d fwm %04x lwm %04x\n", (unsigned long long)frame_count_, cpu.op_pc,
+    log("[blit] frame %llu pc=%06x dmacon %04x %dx%d con %04x %04x A %06x B %06x C %06x D %06x "
+        "mod %d %d %d %d fwm %04x lwm %04x\n", (unsigned long long)frame_count_, cpu.op_pc, cs_.dmacon_,
         w, h, cs_.bltcon0_, cs_.bltcon1_, cs_.bltpt_[0], cs_.bltpt_[1], cs_.bltpt_[2],
         cs_.bltpt_[3], cs_.bltmod_[0], cs_.bltmod_[1], cs_.bltmod_[2], cs_.bltmod_[3],
         cs_.bltafwm_, cs_.bltalwm_);
+  // Blitter-nasty (DMACON BLTPRI): the blitter takes every bus cycle, so
+  // the CPU stalls at its next chip bus access (code and data are all in
+  // chip/slow RAM) until the blit is done. Turrican II runs with BLTPRI on
+  // and writes the next blit's registers right after BLTSIZE.
+  if (cs_.dmacon_ & 0x400) {
+    int64_t end = b.start + int64_t(b.line ? 1 : b.h) * b.row_cycles;
+    blit_finish();
+    cpu.cycles = std::max(cpu.cycles, end);
+  }
 }
 
 void Machine::blit_sync() {

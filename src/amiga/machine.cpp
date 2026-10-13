@@ -266,10 +266,11 @@ void Machine::end_of_frame() {
     log("[ramhash] frame %llu %016llx\n", (unsigned long long)frame_count_, (unsigned long long)h);
   }
   if (getenv("T2_COPDUMP") && frame_count_ == uint64_t(atoi(getenv("T2_COPDUMP")))) {
-    for (uint32_t a = cs_.cop1lc_; a < cs_.cop1lc_ + 4 * 200; a += 4) {
-      log("cop %06x: %04x %04x\n", a, read16(a), read16(a + 2));
-      if (read32(a) == 0xFFFFFFFE) break;
-    }
+    for (uint32_t lc : {cs_.cop1lc_, cs_.cop2lc_})
+      for (uint32_t a = lc; a < lc + 4 * 1000; a += 4) {
+        log("cop %06x: %04x %04x\n", a, read16(a), read16(a + 2));
+        if (read32(a) == 0xFFFFFFFE) break;
+      }
   }
   if (const char* w = getenv("T2_WATCHB")) {
     // debugging: log changes of a byte, checked once per frame
