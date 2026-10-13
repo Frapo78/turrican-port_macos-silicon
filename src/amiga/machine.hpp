@@ -108,6 +108,12 @@ public:
   // Run until QuitRequested is thrown by the host.
   int run();
 
+  // Host-side save states (binary snapshot of CPU, RAM, custom chips, CIAs,
+  // drive head).  HLE bookkeeping is not fully serialised; intended for
+  // in-game use after the OS has been killed by the stage-2 loader.
+  bool save_state(const std::string& path) const;
+  bool load_state(const std::string& path);
+
   // ---- memory helpers for HLE code -------------------------------------
   uint8_t r8(uint32_t a) { return read8(a); }
   uint16_t r16(uint32_t a) { return read16(a); }

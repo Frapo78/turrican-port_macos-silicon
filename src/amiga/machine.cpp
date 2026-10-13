@@ -6,6 +6,7 @@
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 
 namespace amiga {
 
@@ -342,6 +343,114 @@ int Machine::run() {
   disk.flush();
   write_coverage();
   return 0;
+}
+
+// ---- save states -----------------------------------------------------------
+// Simple binary snapshot.  Layout (little-endian host order for scalars):
+//   "T2SS" magic, u32 version=1
+//   u32 chip_size, u32 slow_size, chip bytes, slow bytes
+//   Cpu::Regs + int64 cycles
+//   CustomState (POD)
+//   Cia[2] (POD)
+//   int64 line_start, line_cycles, cia_sync; double eclk_frac
+//   int vpos; u64 frame_count
+//   int cyl, side; u8 motor
+//   u32 key_queue_len + bytes
+//   u32 free_list_count + (addr,size)* 
+
+namespace {
+
+template <class T>
+bool wr(std::ostream& o, const T& v) {
+  o.write(reinterpret_cast<const char*>(&v), sizeof(T));
+  return bool(o);
+}
+template <class T>
+bool rd(std::istream& i, T& v) {
+  i.read(reinterpret_cast<char*>(&v), sizeof(T));
+  return bool(i);
+}
+
+}  // namespace
+
+bool Machine::save_state(const std::string& path) const {
+  std::ofstream out(path, std::ios::binary);
+  if (!out) return false;
+  const char magic[4] = {'T', '2', 'S', 'S'};
+  uint32_t ver = 1;
+  out.write(magic, 4);
+  if (!wr(out, ver)) return false;
+  uint32_t cs = uint32_t(chip_.size()), ss = uint32_t(slow_.size());
+  if (!wr(out, cs) || !wr(out, ss)) return false;
+  out.write(reinterpret_cast<const char*>(chip_.data()), cs);
+  out.write(reinterpret_cast<const char*>(slow_.data()), ss);
+  auto regs = cpu.save();
+  if (!wr(out, regs) || !wr(out, cpu.cycles)) return false;
+  if (!wr(out, cs_)) return false;
+  if (!wr(out, cia_[0]) || !wr(out, cia_[1])) return false;
+  if (!wr(out, line_start_) || !wr(out, line_cycles_) || !wr(out, cia_sync_) ||
+      !wr(out, eclk_frac_) || !wr(out, vpos_) || !wr(out, frame_count_))
+    return false;
+  if (!wr(out, cyl_) || !wr(out, side_)) return false;
+  uint8_t mot = motor_ ? 1 : 0;
+  if (!wr(out, mot)) return false;
+  uint32_t kq = uint32_t(key_queue_.size());
+  if (!wr(out, kq)) return false;
+  for (uint8_t k : key_queue_)
+    if (!wr(out, k)) return false;
+  uint32_t fl = uint32_t(free_list_.size());
+  if (!wr(out, fl)) return false;
+  for (auto& [a, s] : free_list_) {
+    if (!wr(out, a) || !wr(out, s)) return false;
+  }
+  return bool(out);
+}
+
+bool Machine::load_state(const std::string& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) return false;
+  char magic[4];
+  in.read(magic, 4);
+  if (magic[0] != 'T' || magic[1] != '2' || magic[2] != 'S' || magic[3] != 'S') return false;
+  uint32_t ver = 0;
+  if (!rd(in, ver) || ver != 1) return false;
+  uint32_t cs = 0, ss = 0;
+  if (!rd(in, cs) || !rd(in, ss)) return false;
+  if (cs != chip_.size() || ss != slow_.size()) return false;
+  in.read(reinterpret_cast<char*>(chip_.data()), cs);
+  in.read(reinterpret_cast<char*>(slow_.data()), ss);
+  m68k::Cpu::Regs regs{};
+  if (!rd(in, regs) || !rd(in, cpu.cycles)) return false;
+  cpu.restore(regs);
+  if (!rd(in, cs_)) return false;
+  if (!rd(in, cia_[0]) || !rd(in, cia_[1])) return false;
+  if (!rd(in, line_start_) || !rd(in, line_cycles_) || !rd(in, cia_sync_) ||
+      !rd(in, eclk_frac_) || !rd(in, vpos_) || !rd(in, frame_count_))
+    return false;
+  if (!rd(in, cyl_) || !rd(in, side_)) return false;
+  uint8_t mot = 0;
+  if (!rd(in, mot)) return false;
+  motor_ = mot != 0;
+  uint32_t kq = 0;
+  if (!rd(in, kq) || kq > 256) return false;
+  key_queue_.clear();
+  for (uint32_t i = 0; i < kq; ++i) {
+    uint8_t k = 0;
+    if (!rd(in, k)) return false;
+    key_queue_.push_back(k);
+  }
+  uint32_t fl = 0;
+  if (!rd(in, fl) || fl > 10000) return false;
+  free_list_.clear();
+  for (uint32_t i = 0; i < fl; ++i) {
+    uint32_t a = 0, s = 0;
+    if (!rd(in, a) || !rd(in, s)) return false;
+    free_list_[a] = s;
+  }
+  // Display / audio buffers are regenerated next frame.
+  first_bpl_line_ = -1;
+  key_hold_lines_ = 0;
+  return bool(in);
 }
 
 }  // namespace amiga

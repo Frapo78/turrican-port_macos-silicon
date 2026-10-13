@@ -37,10 +37,18 @@ cmake --build build
 | Gamepad **X** | auto-fire (pulsed fire taps) |
 | Gamepad **B** / Space | powerline (secondary); down+B = gyroscope |
 | Gamepad **Back** / Esc | quit to intro |
-| Gamepad **Start** | open host debug menu (D-pad navigate, A ok, B cancel) |
+| Gamepad **Start** | open host debug menu (D-pad navigate, A ok, B cancel; L/R adjust) |
 | Ctrl | pause (fire to resume) |
 | F11 / Alt-Enter | fullscreen |
 | Pause | fast forward |
+
+### Debug menu (Start)
+
+Host-only overlay (does not touch game code): restart, kill, experimental
+pokes, always auto-fire, freeze, **display centre mode** (Off by default;
+Auto is unstable on black scenes; fixed +8/+16/+24/+32 shifts), and
+**10 save-state slots** (Save / Load). States are stored under the save
+directory as `states/slotN.t2ss`.
 
 ## License
 

@@ -115,6 +115,13 @@ struct DebugMenu {
   std::string status;        // one-shot feedback line
   int status_ttl = 0;
 
+  // Vertical centre modes (host presentation only; default OFF).
+  // Fixed offsets are for known short-DIW scenes once gamemodes are mapped.
+  enum CenterMode : int { CTR_OFF = 0, CTR_AUTO, CTR_FIXED_8, CTR_FIXED_16, CTR_FIXED_24, CTR_FIXED_32, CTR_N };
+  int center_mode = CTR_OFF;
+  int save_slot = 0;         // 0..9
+  std::string state_dir;     // directory for slot files
+
   // Candidates from MAIN binary scan (move.b #3,abs.w).  Experimental.
   static constexpr uint32_t CAND_LIVES_A = 0x25c2;
   static constexpr uint32_t CAND_LIVES_B = 0x3ce4;
@@ -127,23 +134,64 @@ struct DebugMenu {
     I_MAX_POWER,
     I_TOGGLE_AUTOFIRE,
     I_TOGGLE_FREEZE,
+    I_CENTER_MODE,
+    I_SLOT,
+    I_SAVE,
+    I_LOAD,
     I_COUNT
   };
 
-  static const char* label(int i) {
+  static const char* center_name(int m) {
+    switch (m) {
+      case CTR_OFF:      return "Off";
+      case CTR_AUTO:     return "Auto (unstable)";
+      case CTR_FIXED_8:  return "Fixed +8";
+      case CTR_FIXED_16: return "Fixed +16";
+      case CTR_FIXED_24: return "Fixed +24";
+      case CTR_FIXED_32: return "Fixed +32";
+      default:            return "?";
+    }
+  }
+
+  static int center_pixels(int m) {
+    switch (m) {
+      case CTR_FIXED_8:  return 8;
+      case CTR_FIXED_16: return 16;
+      case CTR_FIXED_24: return 24;
+      case CTR_FIXED_32: return 32;
+      default:           return 0;
+    }
+  }
+
+  std::string label(int i) const {
+    char buf[64];
     switch (i) {
-      case I_RESUME:         return "Resume";
-      case I_RESTART:        return "Restart game";
-      case I_KILL:           return "Kill player (Esc)";
-      case I_MAX_LIVES:      return "Max lives (exp.)";
-      case I_MAX_POWER:      return "Max powerlines (exp.)";
-      case I_TOGGLE_AUTOFIRE:return "Toggle always auto-fire";
-      case I_TOGGLE_FREEZE:  return "Toggle freeze emulation";
-      default:               return "?";
+      case I_RESUME:          return "Resume";
+      case I_RESTART:         return "Restart game";
+      case I_KILL:            return "Kill player (Esc)";
+      case I_MAX_LIVES:       return "Max lives (exp.)";
+      case I_MAX_POWER:       return "Max powerlines (exp.)";
+      case I_TOGGLE_AUTOFIRE: return always_autofire ? "Always auto-fire: ON" : "Always auto-fire: OFF";
+      case I_TOGGLE_FREEZE:   return frozen ? "Freeze: ON" : "Freeze: OFF";
+      case I_CENTER_MODE:
+        std::snprintf(buf, sizeof(buf), "Center: %s", center_name(center_mode));
+        return buf;
+      case I_SLOT:
+        std::snprintf(buf, sizeof(buf), "Save slot: %d", save_slot);
+        return buf;
+      case I_SAVE:            return "Save state";
+      case I_LOAD:            return "Load state";
+      default:                return "?";
     }
   }
 
   void set_status(const char* s) { status = s; status_ttl = 90; }
+
+  std::string slot_path() const {
+    char name[32];
+    std::snprintf(name, sizeof(name), "slot%d.t2ss", save_slot);
+    return state_dir.empty() ? std::string(name) : (state_dir + "/" + name);
+  }
 
   void open_menu() {
     open = true;
@@ -154,8 +202,7 @@ struct DebugMenu {
   void close_menu() { open = false; }
 
   // Called every frame while open; consumes D-pad / A / B / Start.
-  // Returns true if the event was eaten (do not pass to game).
-  bool navigate(bool up, bool down, bool a, bool b, bool start,
+  bool navigate(bool up, bool down, bool left, bool right, bool a, bool b, bool start,
                 amiga::Machine* m, const std::string& adf, const std::string& save) {
     if (cooldown > 0) --cooldown;
     if (start && cooldown == 0) { close_menu(); return true; }
@@ -163,6 +210,17 @@ struct DebugMenu {
     if (cooldown == 0) {
       if (up)   { sel = (sel + I_COUNT - 1) % I_COUNT; cooldown = 8; }
       if (down) { sel = (sel + 1) % I_COUNT; cooldown = 8; }
+      // Left/right adjust the current item when it is a cycleable option.
+      if (left || right) {
+        int dir = right ? 1 : -1;
+        if (sel == I_CENTER_MODE) {
+          center_mode = (center_mode + dir + CTR_N) % CTR_N;
+          cooldown = 8;
+        } else if (sel == I_SLOT) {
+          save_slot = (save_slot + dir + 10) % 10;
+          cooldown = 8;
+        }
+      }
       if (a) {
         cooldown = 12;
         apply(sel, m, adf, save);
@@ -182,20 +240,17 @@ struct DebugMenu {
         close_menu();
         break;
       case I_KILL:
-        // Game uses Esc as suicide / lose a life.
         m->key_event(0x45, true);
         m->key_event(0x45, false);
         set_status("Kill (Esc)");
         close_menu();
         break;
       case I_MAX_LIVES:
-        // Experimental: poke both candidate addresses found in MAIN.
         m->w8(CAND_LIVES_A, 9);
         m->w8(CAND_LIVES_B, 9);
         set_status("Poked lives candidates = 9");
         break;
       case I_MAX_POWER:
-        // Powerline count is not yet mapped; leave a stub status.
         set_status("Powerlines: address unknown");
         break;
       case I_TOGGLE_AUTOFIRE:
@@ -206,6 +261,42 @@ struct DebugMenu {
         frozen = !frozen;
         set_status(frozen ? "Emulation frozen" : "Emulation running");
         break;
+      case I_CENTER_MODE:
+        center_mode = (center_mode + 1) % CTR_N;
+        set_status(center_name(center_mode));
+        break;
+      case I_SLOT:
+        save_slot = (save_slot + 1) % 10;
+        break;
+      case I_SAVE: {
+        if (state_dir.empty()) {
+          set_status("No state dir");
+          break;
+        }
+        std::error_code ec;
+        std::filesystem::create_directories(state_dir, ec);
+        std::string p = slot_path();
+        if (m->save_state(p)) {
+          char msg[80];
+          std::snprintf(msg, sizeof(msg), "Saved slot %d", save_slot);
+          set_status(msg);
+        } else {
+          set_status("Save failed");
+        }
+        break;
+      }
+      case I_LOAD: {
+        std::string p = slot_path();
+        if (m->load_state(p)) {
+          char msg[80];
+          std::snprintf(msg, sizeof(msg), "Loaded slot %d", save_slot);
+          set_status(msg);
+          close_menu();
+        } else {
+          set_status("Load failed (empty/missing?)");
+        }
+        break;
+      }
       default:
         break;
     }
@@ -327,11 +418,11 @@ struct DebugMenu {
     draw_text(fb, box_x + 8, box_y + 6, "DEBUG MENU", 0xFFFFFF55u);
     for (int i = 0; i < I_COUNT; ++i) {
       uint32_t col = (i == sel) ? 0xFFFFFF00u : 0xFFCCCCCCu;
-      char line[64];
-      std::snprintf(line, sizeof(line), "%c %s", (i == sel) ? '>' : ' ', label(i));
+      char line[72];
+      std::snprintf(line, sizeof(line), "%c %s", (i == sel) ? '>' : ' ', label(i).c_str());
       draw_text(fb, box_x + 8, box_y + 20 + i * 12, line, col);
     }
-    draw_text(fb, box_x + 8, box_y + box_h - 12, "A=OK  B/Start=Back", 0xFF8888AAu);
+    draw_text(fb, box_x + 8, box_y + box_h - 12, "A=OK  B/Start=Back  L/R=adj", 0xFF8888AAu);
   }
 };
 
@@ -461,7 +552,7 @@ public:
     start_was = pad_start;
 
     if (dbg_.open) {
-      dbg_.navigate(up, down, pad_a, pad_b, pad_start, machine, adf_path_, save_path_);
+      dbg_.navigate(up, down, left, right, pad_a, pad_b, pad_start, machine, adf_path_, save_path_);
       // While the menu is open, neutralise game input.
       machine->joy_state(false, false, false, false, false);
       return;
@@ -516,45 +607,55 @@ public:
     }
   }
 
-  // Host-only workaround: the game programs a shorter DIW than 256 lines, so
-  // the emulated framebuffer is top-aligned with black below the HUD.  Shift
-  // the non-black band to the vertical centre of the 256-line buffer.  Bounds
-  // are sticky (hysteresis) to avoid jitter when a row flickers.
-  void center_active_region(uint32_t* fb) {
-    auto row_mostly_black = [&](int y) {
-      const uint32_t* row = fb + y * amiga::FB_W;
-      int lit = 0;
-      for (int x = 0; x < amiga::FB_W; x += 2) {
-        // Ignore very dark pixels (border / clear colour).
-        if ((row[x] & 0x00F8F8F8u) != 0) ++lit;
-      }
-      return lit < 6;
-    };
-    int top = 0, bot = amiga::VIEW_H - 1;
-    while (top < bot && row_mostly_black(top)) ++top;
-    while (bot > top && row_mostly_black(bot)) --bot;
-    // Require a plausible active height; otherwise leave the frame alone
-    // (title screens / loading may be mostly black).
-    int h = bot - top + 1;
-    if (h < 64 || h >= amiga::VIEW_H) return;
+  // Optional host-only vertical shift of the active display region.
+  // Default is OFF — auto mode is unstable on mostly-black scenes; fixed
+  // offsets can be chosen from the debug menu once gamemodes are known.
+  void apply_center(uint32_t* fb) {
+    const int mode = dbg_.center_mode;
+    if (mode == DebugMenu::CTR_OFF) return;
 
-    // Sticky bounds: only move if the new band differs by more than 2 lines.
-    if (center_top_ < 0 || (top - center_top_ > 2) || (center_top_ - top > 2) ||
-        (bot - center_bot_ > 2) || (center_bot_ - bot > 2)) {
-      center_top_ = top;
-      center_bot_ = bot;
+    int shift = 0;
+    if (mode == DebugMenu::CTR_AUTO) {
+      auto row_mostly_black = [&](int y) {
+        const uint32_t* row = fb + y * amiga::FB_W;
+        int lit = 0;
+        for (int x = 0; x < amiga::FB_W; x += 2)
+          if ((row[x] & 0x00F8F8F8u) != 0) ++lit;
+        return lit < 6;
+      };
+      int top = 0, bot = amiga::VIEW_H - 1;
+      while (top < bot && row_mostly_black(top)) ++top;
+      while (bot > top && row_mostly_black(bot)) --bot;
+      int h = bot - top + 1;
+      if (h < 64 || h >= amiga::VIEW_H) return;
+      if (center_top_ < 0 || (top - center_top_ > 2) || (center_top_ - top > 2) ||
+          (bot - center_bot_ > 2) || (center_bot_ - bot > 2)) {
+        center_top_ = top;
+        center_bot_ = bot;
+      } else {
+        top = center_top_;
+        bot = center_bot_;
+        h = bot - top + 1;
+      }
+      shift = (amiga::VIEW_H - h) / 2 - top;
     } else {
-      top = center_top_;
-      bot = center_bot_;
-      h = bot - top + 1;
+      shift = DebugMenu::center_pixels(mode);
     }
-    int new_top = (amiga::VIEW_H - h) / 2;
-    if (new_top == top) return;
+    if (shift == 0) return;
 
     static std::vector<uint32_t> tmp;
     tmp.assign(amiga::FB_W * amiga::VIEW_H, 0u);
-    std::copy(fb + top * amiga::FB_W, fb + (bot + 1) * amiga::FB_W,
-              tmp.begin() + new_top * amiga::FB_W);
+    if (shift > 0) {
+      // Move content down by `shift` lines (black fills the top).
+      int rows = amiga::VIEW_H - shift;
+      std::copy(fb, fb + rows * amiga::FB_W, tmp.begin() + shift * amiga::FB_W);
+    } else {
+      int up = -shift;
+      int rows = amiga::VIEW_H - up;
+      std::copy(fb + up * amiga::FB_W, fb + amiga::VIEW_H * amiga::FB_W, tmp.begin());
+      // bottom stays black
+      (void)rows;
+    }
     std::copy(tmp.begin(), tmp.end(), fb);
   }
 
@@ -566,7 +667,7 @@ public:
     // the machine's view buffer.
     static std::vector<uint32_t> overlay;
     overlay.assign(fb, fb + amiga::FB_W * amiga::VIEW_H);
-    center_active_region(overlay.data());
+    apply_center(overlay.data());
     dbg_.draw(overlay.data());
 
     SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
@@ -789,6 +890,7 @@ int main(int argc, char** argv) {
   host.machine = &machine;
   host.adf_path_ = adf_path;
   host.save_path_ = save_dir + "/disk.adf";
+  host.dbg_.state_dir = save_dir + "/states";
   host.screenshot_frame = shot_frame;
   host.screenshot_path = shot_path;
   host.quit_after = quit_after;
