@@ -16,5 +16,6 @@
       DC / a stuck channel
 - [ ] Compare against FS-UAE: display window (game uses DIW $2C91, left
       edge), sprite priorities, timing of loading screens
-- [ ] docs/disk_format.md, docs on memory map of MAIN
+- [x] docs/disk_format.md
+- [ ] docs on memory map of MAIN
 - [ ] Native reimplementation; gamepad support

@@ -8,7 +8,7 @@ Route: (1) run the original code on an emulated A500 runtime (done, from
 (tools/recomp.py from ~/projects/fa18-interceptor/trunk, to be adapted),
 (3) native reimplementation with new features (gamepad support etc.).
 
-## Disk format (tools/t2disk.py, docs to be written in docs/)
+## Disk format (tools/t2disk.py, see docs/disk_format.md)
 - Old-style extended ADF "UAE--ADF": 160 × {u16 sync, u16 len}, then the
   track data. Tracks 0-1 AmigaDOS (sync 0), tracks 2-159 raw MFM after
   sync $9521, 13640 bytes each (the last image track is cut short by 248
