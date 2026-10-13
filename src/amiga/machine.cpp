@@ -124,6 +124,14 @@ bool Machine::boot(const std::string& adf_path, const std::string& save_path) {
   return true;
 }
 
+bool Machine::dump_ram(const std::string& path) const {
+  FILE* f = fopen(path.c_str(), "wb");
+  if (!f) return false;
+  bool ok = fwrite(chip_.data(), 1, chip_.size(), f) == chip_.size() &&
+            fwrite(slow_.data(), 1, slow_.size(), f) == slow_.size();
+  return fclose(f) == 0 && ok;
+}
+
 void Machine::write_coverage() {
   if (coverage_path.empty() || executed_.empty()) return;
   FILE* f = fopen(coverage_path.c_str(), "w");
@@ -311,10 +319,24 @@ void Machine::check_interrupts() {
   if (level > cpu.imask) cpu.interrupt(level);
 }
 
+void Machine::set_pc_hook(uint32_t pc, PcHook fn) {
+  for (auto& h : pc_hooks_)
+    if (h.first == pc) { h.second = std::move(fn); return; }
+  pc_hooks_.emplace_back(pc, std::move(fn));
+}
+
 void Machine::execute(int64_t until) {
   while (cpu.cycles < until) {
     if (cpu.stopped) { cpu.cycles = until; return; }
     uint32_t pc = cpu.pc;
+    bool redirected = false;
+    for (auto& [hpc, fn] : pc_hooks_)
+      if (hpc == pc) {
+        fn();
+        redirected = cpu.pc != pc;
+        break;
+      }
+    if (redirected) continue;
     if (!executed_.empty() && pc < CHIP_SIZE) executed_[pc] = 1;
     if (trace)
       log("%06x  %04x  d0=%08x d1=%08x a0=%08x a7=%08x sr=%04x\n", pc, read16(pc), cpu.d[0],

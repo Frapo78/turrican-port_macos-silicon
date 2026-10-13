@@ -31,8 +31,15 @@ add_library(amiga STATIC
 )
 target_link_libraries(amiga PUBLIC m68k)
 
+# Turrican II game knowledge (memory map, cheats, level select).
+add_library(t2 STATIC
+  src/t2/game.cpp
+  src/t2/game.hpp
+)
+target_link_libraries(t2 PUBLIC amiga)
+
 add_executable(turrican2 src/main.cpp)
-target_link_libraries(turrican2 PRIVATE amiga SDL2::SDL2)
+target_link_libraries(turrican2 PRIVATE t2 SDL2::SDL2)
 target_compile_definitions(turrican2 PRIVATE
   T2_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/turrican2")
 

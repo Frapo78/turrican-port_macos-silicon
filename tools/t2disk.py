@@ -67,7 +67,7 @@ def decoded_tracks(path):
 def directory(dec):
     d = dec[2][0]
     entries = []
-    for i in range(25):
+    for i in range(30):
         name, trk, off, ln, ul = struct.unpack_from('>4sHHLL', d, 16 * i)
         if name == b'\0\0\0\0':
             continue

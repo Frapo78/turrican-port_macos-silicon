@@ -1,81 +1,93 @@
 #!/usr/bin/env python3
-"""Disassemble a program from the Hostages disk, relocated to the addresses
-it runs at in the port (so addresses match --verbose/--trace output).
+"""Disassemble a file from the Turrican II disk at the address it runs at.
 
-    python3 tools/disasm.py "Hostage (Infogrames).adf" apro1. > apro1.dis
-    python3 tools/disasm.py "Hostage (Infogrames).adf" tatou. --base 0xd620
+    python3 tools/disasm.py T2.adf MAIN > main.dis          # base $C0
+    python3 tools/disasm.py T2.adf RA-I --base 0x30000
+    python3 tools/disasm.py T2.adf MAIN --coverage cov.txt  # mark executed
+    python3 tools/disasm.py --ram game.ram --start 0x20700 --stop 0x24000
 
-Stage 2 ("tatou.", loaded by the bootblock) allocates each hunk with
-AllocMem(size + 8) and uses the address + 8; with the port's memory layout
-both "apro1." and "it." get their code hunk at $3998 and the data hunk
-directly after it. Needs m68k objdump (in the nix dev shell), or set
-OBJDUMP.
+Files are unpacked (PP20) like the loader does. --coverage takes the file
+written by `turrican2 --coverage FILE` ("x <hexaddr>" lines); executed
+instructions get a '*' in the first column, which separates code from the
+data that is interleaved with it. Needs m68k objdump (nix dev shell), or
+set M68K_OBJDUMP.
 """
 import argparse
 import os
-import struct
+import shutil
 import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(__file__))
-import hdisk
-import hunks as hunkmod
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import t2disk  # noqa: E402
 
-PROGRAM_BASE = 0x3998
-
-
-def layout(hs, base):
-    addrs = []
-    a = base
-    for h in hs:
-        addrs.append(a)
-        a = ((a + h.alloc_size + 7) & ~7) + 8
-    return addrs
+# Load addresses known so far (stage 2 at $60000 loads these).
+BASES = {'RA-I': 0x30000, 'MAIN': 0xC0}
 
 
-def relocate(hs, addrs):
-    end = max(a + h.alloc_size for h, a in zip(hs, addrs))
-    img = bytearray(end - addrs[0])
-    for h, a in zip(hs, addrs):
-        off = a - addrs[0]
-        img[off:off + len(h.data)] = h.data
-        for target, offs in h.relocs.items():
-            for o in offs:
-                v = struct.unpack_from(">I", img, off + o)[0]
-                struct.pack_into(">I", img, off + o, (v + addrs[target]) & 0xFFFFFFFF)
-    return img
+def find_objdump():
+    for name in (os.environ.get('M68K_OBJDUMP'), 'm68k-unknown-linux-gnu-objdump',
+                 'm68k-linux-gnu-objdump', 'm68k-elf-objdump'):
+        if name and shutil.which(name):
+            return name
+    sys.exit('m68k objdump not found (use the nix dev shell or set M68K_OBJDUMP)')
+
+
+def load_file(adf, name):
+    _, dec = t2disk.decoded_tracks(adf)
+    for n, trk, off, ln, _ in t2disk.directory(dec):
+        if n.strip() == name:
+            data = t2disk.file_data(dec, trk, off, ln)
+            if data[:4] == b'PP20':
+                data = t2disk.pp20_unpack(data, 0)
+            return data
+    sys.exit(f'{name}: not on the disk')
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("adf")
-    ap.add_argument("program")
-    ap.add_argument("--base", type=lambda x: int(x, 0), default=PROGRAM_BASE)
-    args = ap.parse_args()
-    img = open(args.adf, "rb").read()
-    files = {name: (off, size) for _, name, off, size in hdisk.read_dir(img)}
-    off, size = files[args.program]
-    with tempfile.TemporaryDirectory() as td:
-        path = os.path.join(td, "prog")
-        open(path, "wb").write(img[off:off + size])
-        hs = hunkmod.parse(path)
-        addrs = layout(hs, args.base)
-        flat = relocate(hs, addrs)
-        bin_path = os.path.join(td, "flat.bin")
-        open(bin_path, "wb").write(flat)
-        objdump = os.environ.get("OBJDUMP", "m68k-unknown-linux-gnu-objdump")
-        # Only the code hunk is disassembled; data follows as raw bytes.
-        out = subprocess.run([objdump, "-b", "binary", "-m", "m68k:68000", "-D",
-                              f"--adjust-vma={addrs[0]:#x}",
-                              f"--stop-address={addrs[0] + hs[0].alloc_size:#x}", bin_path],
-                             capture_output=True, text=True, check=True).stdout
-    for h, a in zip(hs, addrs):
-        print(f"; hunk {h.index} {h.kind} {a:#08x}-{a + h.alloc_size:#08x}")
-    for line in out.splitlines():
-        if line.startswith(" "):
-            print(line)
+    ap.add_argument('adf', nargs='?')
+    ap.add_argument('name', nargs='?')
+    ap.add_argument('--ram', help='RAM dump (script "dump" command), base 0')
+    ap.add_argument('--base', type=lambda s: int(s, 0))
+    ap.add_argument('--start', type=lambda s: int(s, 0))
+    ap.add_argument('--stop', type=lambda s: int(s, 0))
+    ap.add_argument('--coverage')
+    a = ap.parse_args()
+    if a.ram:
+        base = 0
+        data = open(a.ram, 'rb').read()
+    else:
+        if not a.name:
+            ap.error('need ADF and file name, or --ram')
+        base = a.base if a.base is not None else BASES.get(a.name, 0)
+        data = load_file(a.adf, a.name)
+    executed = set()
+    if a.coverage:
+        for line in open(a.coverage):
+            p = line.split()
+            if len(p) == 2 and p[0] == 'x':
+                executed.add(int(p[1], 16))
+    with tempfile.NamedTemporaryFile(suffix='.bin') as f:
+        f.write(data)
+        f.flush()
+        cmd = [find_objdump(), '-D', '-b', 'binary', '-m', 'm68k',
+               f'--adjust-vma={base:#x}']
+        if a.start is not None:
+            cmd.append(f'--start-address={a.start:#x}')
+        if a.stop is not None:
+            cmd.append(f'--stop-address={a.stop:#x}')
+        cmd.append(f.name)
+        out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    for line in out.splitlines()[7:]:
+        addr = line.split(':', 1)[0].strip()
+        try:
+            mark = '*' if int(addr, 16) in executed else ' '
+        except ValueError:
+            mark = ' '
+        print(mark + line)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

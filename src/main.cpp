@@ -1,5 +1,6 @@
 // Turrican II — SDL2 front end.
 #include "amiga/machine.hpp"
+#include "t2/game.hpp"
 
 #include <SDL.h>
 
@@ -18,6 +19,11 @@ namespace {
 // Scripted input for automated runs:  <frame> <command> [args]
 //   key <SDL key name> [down|up|tap]   joy <subset of "udlrf">
 //   mouse <dx> <dy>   lmb|rmb <0|1>   shot <file.ppm>   quit
+//   dump <file>  (chip RAM, then slow RAM)   covreset  (restart --coverage)
+//   game <action> [args]: t2::Game actions, as in the debug menu:
+//     warp <world 1-5> <stage 1-3>, lives <n>, addlife, energy, weapon <1-3> <level>,
+//     maxweapons, powerline, bombs <n>, continues <n>, time <n>,
+//     inflives|infenergy|god|cheat <0|1>
 //   poke <hexaddr> <hexvalue> [b|w|l]   (force a game variable)
 struct ScriptEvent {
   int frame;
@@ -102,9 +108,8 @@ int amiga_rawkey(SDL_Scancode sc) {
 }
 
 // ---------------------------------------------------------------------------
-// Host-side debug menu (Start button).  Fully separate from the emulated
-// game code — only uses Machine::boot / key_event / w8 for actions that are
-// safe with the current reverse-engineering state.
+// Host-side debug menu (Start button). Game actions go through t2::Game,
+// which knows MAIN's memory map (docs/memory_map.md).
 // ---------------------------------------------------------------------------
 struct DebugMenu {
   bool open = false;
@@ -122,16 +127,24 @@ struct DebugMenu {
   int save_slot = 0;         // 0..9
   std::string state_dir;     // directory for slot files
 
-  // Candidates from MAIN binary scan (move.b #3,abs.w).  Experimental.
-  static constexpr uint32_t CAND_LIVES_A = 0x25c2;
-  static constexpr uint32_t CAND_LIVES_B = 0x3ce4;
-
   enum Item : int {
     I_RESUME = 0,
     I_RESTART,
-    I_KILL,
-    I_MAX_LIVES,
-    I_MAX_POWER,
+    I_GIVE_UP,
+    I_LEVEL,
+    I_WEAPON,
+    I_MAX_WEAPONS,
+    I_ADD_LIFE,
+    I_LIVES_99,
+    I_INF_LIVES,
+    I_FULL_ENERGY,
+    I_INF_ENERGY,
+    I_GOD,
+    I_POWER_LINE,
+    I_BOMBS,
+    I_CONTINUES,
+    I_TIME,
+    I_CHEAT,
     I_TOGGLE_AUTOFIRE,
     I_TOGGLE_FREEZE,
     I_CENTER_MODE,
@@ -140,6 +153,12 @@ struct DebugMenu {
     I_LOAD,
     I_COUNT
   };
+  static constexpr int VISIBLE = 15;  // rows shown at once (the list scrolls)
+  int scroll = 0;
+
+  t2::Game* game = nullptr;
+  int level_world = 0, level_stage = 0;  // level select (0-based)
+  int weapon_sel = 1, weapon_level = 0;  // weapon select
 
   static const char* center_name(int m) {
     switch (m) {
@@ -165,12 +184,39 @@ struct DebugMenu {
 
   std::string label(int i) const {
     char buf[64];
+    auto onoff = [](bool b) { return b ? "ON" : "OFF"; };
     switch (i) {
       case I_RESUME:          return "Resume";
       case I_RESTART:         return "Restart game";
-      case I_KILL:            return "Kill player (Esc)";
-      case I_MAX_LIVES:       return "Max lives (exp.)";
-      case I_MAX_POWER:       return "Max powerlines (exp.)";
+      case I_GIVE_UP:         return "Give up (Esc)";
+      case I_LEVEL:
+        std::snprintf(buf, sizeof(buf), "Level: < %d-%d >%s", level_world + 1, level_stage + 1,
+                      game && game->pending_world() >= 0 ? " (pending)" : "");
+        return buf;
+      case I_WEAPON:
+        std::snprintf(buf, sizeof(buf), "Weapon: < %s %d/%d >", t2::weapon_name(weapon_sel),
+                      weapon_level, t2::MAX_LEVEL[weapon_sel]);
+        return buf;
+      case I_MAX_WEAPONS:     return "Max all weapons";
+      case I_ADD_LIFE:        return "Extra life";
+      case I_LIVES_99:        return "Lives = 99";
+      case I_INF_LIVES:
+        std::snprintf(buf, sizeof(buf), "Infinite lives: %s", onoff(game && game->infinite_lives));
+        return buf;
+      case I_FULL_ENERGY:     return "Full energy";
+      case I_INF_ENERGY:
+        std::snprintf(buf, sizeof(buf), "Infinite energy: %s", onoff(game && game->infinite_energy));
+        return buf;
+      case I_GOD:
+        std::snprintf(buf, sizeof(buf), "God mode (no timer): %s", onoff(game && game->god_mode));
+        return buf;
+      case I_POWER_LINE:      return "Refill power line";
+      case I_BOMBS:           return "Wheel bombs = 99";
+      case I_CONTINUES:       return "Continues = 5";
+      case I_TIME:            return "Time = 999";
+      case I_CHEAT:
+        std::snprintf(buf, sizeof(buf), "Built-in cheat: %s", onoff(game && game->cheat_flag()));
+        return buf;
       case I_TOGGLE_AUTOFIRE: return always_autofire ? "Always auto-fire: ON" : "Always auto-fire: OFF";
       case I_TOGGLE_FREEZE:   return frozen ? "Freeze: ON" : "Freeze: OFF";
       case I_CENTER_MODE:
@@ -185,6 +231,11 @@ struct DebugMenu {
     }
   }
 
+  // Items that only work while a game is running.
+  static bool needs_game(int i) {
+    return (i >= I_WEAPON && i <= I_TIME) || i == I_CHEAT;
+  }
+
   void set_status(const char* s) { status = s; status_ttl = 90; }
 
   std::string slot_path() const {
@@ -196,7 +247,14 @@ struct DebugMenu {
   void open_menu() {
     open = true;
     sel = 0;
+    scroll = 0;
     cooldown = 8;
+    if (game && game->in_game()) {
+      level_world = std::clamp(game->world(), 0, t2::NUM_WORLDS - 1);
+      level_stage = std::clamp(game->stage(), 0, t2::STAGES[level_world] - 1);
+      weapon_sel = std::clamp(game->weapon(), 1, 3);
+      weapon_level = game->weapon_level(weapon_sel);
+    }
   }
 
   void close_menu() { open = false; }
@@ -210,10 +268,34 @@ struct DebugMenu {
     if (cooldown == 0) {
       if (up)   { sel = (sel + I_COUNT - 1) % I_COUNT; cooldown = 8; }
       if (down) { sel = (sel + 1) % I_COUNT; cooldown = 8; }
+      if (sel < scroll) scroll = sel;
+      if (sel >= scroll + VISIBLE) scroll = sel - VISIBLE + 1;
       // Left/right adjust the current item when it is a cycleable option.
       if (left || right) {
         int dir = right ? 1 : -1;
-        if (sel == I_CENTER_MODE) {
+        if (sel == I_LEVEL) {
+          // Steps through 1-1, 1-2, 2-1, ... 5-2.
+          level_stage += dir;
+          if (level_stage < 0) {
+            level_world = (level_world + t2::NUM_WORLDS - 1) % t2::NUM_WORLDS;
+            level_stage = t2::STAGES[level_world] - 1;
+          } else if (level_stage >= t2::STAGES[level_world]) {
+            level_world = (level_world + 1) % t2::NUM_WORLDS;
+            level_stage = 0;
+          }
+          cooldown = 8;
+        } else if (sel == I_WEAPON) {
+          // Steps through each weapon's levels: Multiple 0..2, Laser 0..4, ...
+          weapon_level += dir;
+          if (weapon_level < 0) {
+            weapon_sel = weapon_sel == 1 ? 3 : weapon_sel - 1;
+            weapon_level = t2::MAX_LEVEL[weapon_sel];
+          } else if (weapon_level > t2::MAX_LEVEL[weapon_sel]) {
+            weapon_sel = weapon_sel == 3 ? 1 : weapon_sel + 1;
+            weapon_level = 0;
+          }
+          cooldown = 8;
+        } else if (sel == I_CENTER_MODE) {
           center_mode = (center_mode + dir + CTR_N) % CTR_N;
           cooldown = 8;
         } else if (sel == I_SLOT) {
@@ -230,6 +312,11 @@ struct DebugMenu {
   }
 
   void apply(int item, amiga::Machine* m, const std::string& adf, const std::string& save) {
+    if (needs_game(item) && (!game || !game->in_game())) {
+      set_status("Only during a game");
+      return;
+    }
+    if (item == I_LEVEL && !game) return;
     switch (item) {
       case I_RESUME:
         close_menu();
@@ -239,19 +326,51 @@ struct DebugMenu {
         else set_status("Boot failed");
         close_menu();
         break;
-      case I_KILL:
+      case I_GIVE_UP:
+        // The game's Esc handler ($5B6C) clears the lives: game over.
         m->key_event(0x45, true);
         m->key_event(0x45, false);
-        set_status("Kill (Esc)");
+        set_status("Give up (Esc)");
         close_menu();
         break;
-      case I_MAX_LIVES:
-        m->w8(CAND_LIVES_A, 9);
-        m->w8(CAND_LIVES_B, 9);
-        set_status("Poked lives candidates = 9");
+      case I_LEVEL: {
+        game->warp(level_world, level_stage);
+        char msg[64];
+        std::snprintf(msg, sizeof(msg), game->in_game() ? "Warping to %d-%d"
+                                                        : "Next game starts at %d-%d",
+                      level_world + 1, level_stage + 1);
+        set_status(msg);
+        if (game->in_game()) close_menu();
         break;
-      case I_MAX_POWER:
-        set_status("Powerlines: address unknown");
+      }
+      case I_WEAPON:
+        game->select_weapon(weapon_sel, weapon_level);
+        set_status("Weapon set");
+        break;
+      case I_MAX_WEAPONS: game->max_weapons(); set_status("All weapons at max"); break;
+      case I_ADD_LIFE: game->add_life(); set_status("Extra life"); break;
+      case I_LIVES_99: game->set_lives(99); set_status("Lives = 99"); break;
+      case I_INF_LIVES:
+        game->infinite_lives = !game->infinite_lives;
+        set_status(game->infinite_lives ? "Infinite lives ON" : "Infinite lives OFF");
+        break;
+      case I_FULL_ENERGY: game->full_energy(); set_status("Energy refilled"); break;
+      case I_INF_ENERGY:
+        game->infinite_energy = !game->infinite_energy;
+        set_status(game->infinite_energy ? "Infinite energy ON" : "Infinite energy OFF");
+        break;
+      case I_GOD:
+        game->god_mode = !game->god_mode;
+        if (!game->god_mode) m->w16(t2::var::INVULNERABLE, 0);
+        set_status(game->god_mode ? "God mode ON" : "God mode OFF");
+        break;
+      case I_POWER_LINE: game->refill_power_line(); set_status("Power line refilled"); break;
+      case I_BOMBS: game->set_bombs(99); set_status("Wheel bombs = 99"); break;
+      case I_CONTINUES: game->set_continues(5); set_status("Continues = 5"); break;
+      case I_TIME: game->set_time(999); set_status("Time = 999"); break;
+      case I_CHEAT:
+        game->set_cheat_flag(!game->cheat_flag());
+        set_status(game->cheat_flag() ? "Built-in cheat OFF" : "Built-in cheat ON (no score)");
         break;
       case I_TOGGLE_AUTOFIRE:
         always_autofire = !always_autofire;
@@ -399,7 +518,7 @@ struct DebugMenu {
     // Dim the playfield.
     for (int i = 0; i < amiga::FB_W * amiga::VIEW_H; ++i)
       fb[i] = (fb[i] >> 2) & 0x3F3F3F3Fu;
-    const int box_x = 40, box_y = 40, box_w = 240, box_h = 20 + I_COUNT * 12 + 16;
+    const int box_x = 24, box_y = 24, box_w = 272, box_h = 20 + VISIBLE * 12 + 16;
     for (int y = box_y; y < box_y + box_h && y < amiga::VIEW_H; ++y)
       for (int x = box_x; x < box_x + box_w && x < amiga::FB_W; ++x)
         fb[y * amiga::FB_W + x] = 0xFF1A1A2Eu;
@@ -416,12 +535,17 @@ struct DebugMenu {
       if (xb >= 0 && xb < amiga::FB_W) fb[y * amiga::FB_W + xb] = 0xFFAAAAFFu;
     }
     draw_text(fb, box_x + 8, box_y + 6, "DEBUG MENU", 0xFFFFFF55u);
-    for (int i = 0; i < I_COUNT; ++i) {
-      uint32_t col = (i == sel) ? 0xFFFFFF00u : 0xFFCCCCCCu;
+    bool playing = game && game->in_game();
+    for (int row = 0; row < VISIBLE && scroll + row < I_COUNT; ++row) {
+      int i = scroll + row;
+      uint32_t col = (i == sel) ? 0xFFFFFF00u : (needs_game(i) && !playing) ? 0xFF666677u : 0xFFCCCCCCu;
       char line[72];
       std::snprintf(line, sizeof(line), "%c %s", (i == sel) ? '>' : ' ', label(i).c_str());
-      draw_text(fb, box_x + 8, box_y + 20 + i * 12, line, col);
+      draw_text(fb, box_x + 8, box_y + 20 + row * 12, line, col);
     }
+    if (scroll > 0) draw_text(fb, box_x + box_w - 14, box_y + 20, "^", 0xFF8888AAu);
+    if (scroll + VISIBLE < I_COUNT)
+      draw_text(fb, box_x + box_w - 14, box_y + 20 + (VISIBLE - 1) * 12, "v", 0xFF8888AAu);
     draw_text(fb, box_x + 8, box_y + box_h - 12, "A=OK  B/Start=Back  L/R=adj", 0xFF8888AAu);
   }
 };
@@ -753,6 +877,12 @@ public:
         if (sz == 'l') machine->w32(a, v);
         else if (sz == 'w') machine->w16(a, uint16_t(v));
         else machine->w8(a, uint8_t(v));
+      } else if (e.cmd == "game" && !e.args.empty() && dbg_.game) {
+        run_game_command(*dbg_.game, e.args);
+      } else if (e.cmd == "dump" && !e.args.empty()) {
+        machine->dump_ram(e.args[0]);
+      } else if (e.cmd == "covreset") {
+        machine->reset_coverage();
       } else if (e.cmd == "shot" && !e.args.empty()) {
         pending_shot = e.args[0];
       } else if (e.cmd == "quit") {
@@ -762,6 +892,26 @@ public:
   }
 
   std::string pending_shot;
+
+  static void run_game_command(t2::Game& g, const std::vector<std::string>& a) {
+    auto num = [&](size_t i, int def) { return i < a.size() ? std::atoi(a[i].c_str()) : def; };
+    const std::string& c = a[0];
+    if (c == "warp") g.warp(num(1, 1) - 1, num(2, 1) - 1);
+    else if (c == "lives") g.set_lives(num(1, 3));
+    else if (c == "addlife") g.add_life();
+    else if (c == "energy") g.full_energy();
+    else if (c == "weapon") g.select_weapon(num(1, 1), num(2, 0));
+    else if (c == "maxweapons") g.max_weapons();
+    else if (c == "powerline") g.refill_power_line();
+    else if (c == "bombs") g.set_bombs(num(1, 3));
+    else if (c == "continues") g.set_continues(num(1, 0));
+    else if (c == "time") g.set_time(num(1, 999));
+    else if (c == "inflives") g.infinite_lives = num(1, 1);
+    else if (c == "infenergy") g.infinite_energy = num(1, 1);
+    else if (c == "god") g.god_mode = num(1, 1);
+    else if (c == "cheat") g.set_cheat_flag(num(1, 1));
+    else fprintf(stderr, "script: unknown game command %s\n", c.c_str());
+  }
 
   void save_screenshot(const uint32_t* fb) {
     FILE* f = fopen(screenshot_path.c_str(), "wb");
@@ -879,6 +1029,7 @@ int main(int argc, char** argv) {
   }
 
   amiga::Machine machine;
+  t2::Game game(machine);
   machine.verbose = verbose;
   machine.trace = trace;
   machine.set_cpu_speed(speed);
@@ -888,6 +1039,7 @@ int main(int argc, char** argv) {
 
   SdlHost host;
   host.machine = &machine;
+  host.dbg_.game = &game;
   host.adf_path_ = adf_path;
   host.save_path_ = save_dir + "/disk.adf";
   host.dbg_.state_dir = save_dir + "/states";

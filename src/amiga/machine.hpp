@@ -165,6 +165,20 @@ public:
   // Coverage: record executed instruction addresses (chip RAM).
   std::string coverage_path;
   void write_coverage();
+  // Forget the coverage recorded so far (to cover one game phase only).
+  void reset_coverage() { std::fill(executed_.begin(), executed_.end(), 0); }
+  // Write chip RAM (and slow RAM after it) to a file.
+  bool dump_ram(const std::string& path) const;
+
+  // PC hooks: `fn` runs whenever the CPU is about to execute the
+  // instruction at `pc` (host-side game logic: cheats, level select). A
+  // hook may change cpu.pc (e.g. to call a game routine); the hooks of the
+  // new pc then run before anything is executed. Kept few: every
+  // instruction is checked against them. Recompiled code must leave to the
+  // dispatcher at hooked addresses.
+  using PcHook = std::function<void()>;
+  void set_pc_hook(uint32_t pc, PcHook fn);
+  void clear_pc_hooks() { pc_hooks_.clear(); }
 
   int ram_hash_every = 0;       // log a hash of chip RAM every N frames
   uint64_t frame_count() const { return frame_count_; }
@@ -287,6 +301,7 @@ private:
   std::map<uint32_t, uint32_t> free_list_;
 
   std::vector<uint8_t> executed_;
+  std::vector<std::pair<uint32_t, PcHook>> pc_hooks_;
   uint32_t watch_pc_addr_ = 0;
   uint8_t watch_pc_val_ = 0;
   int watch_pc_budget_ = 40;

@@ -48,12 +48,26 @@ variables, so whole-image checksums do not work. Plan:
   chunk, else interprets.
 - `Bus::ram_written` is declared in cpu.hpp but never called yet.
 
+## Game knowledge
+- docs/memory_map.md: MAIN's game flow, world files, player state, input.
+- src/t2/game.cpp (t2::Game): host-side actions on top of it. Hooks via
+  Machine::set_pc_hook at the game loop top ($529A/$5304: queued actions,
+  injected calls of game routines with registers saved; return address
+  $FFFFF0 traps back) and at the world load ($5230: level select). The
+  hooks check MAIN's instruction words first.
+- The recompiler must leave to the dispatcher at hooked PCs.
+
 ## Tools
 - `tools/t2disk.py list|extract|track ADF ...` — custom disk format, PP20
-- `tools/disasm.py` — disassembly (m68k objdump from the nix shell)
+  (30 directory entries, as MAIN reads them)
+- `tools/disasm.py T2.adf MAIN [--coverage FILE]` — disassembly at the load
+  address ('*' = executed); `--ram DUMP --start A --stop B` for code that
+  is only in memory (world files). Needs the nix shell (M68K_OBJDUMP).
 - `tests/run_scenarios.sh` — scripted headless runs (scenarios/ empty)
 - Script lines: `<frame> key <name|hex> [down|up|tap]`, `joy udlrf`,
-  `shot file.ppm`, `poke addr val [b|w|l]`, `quit` (frame may be `+N`)
+  `shot file.ppm`, `poke addr val [b|w|l]`, `dump file` (chip+slow RAM),
+  `covreset`, `game <action> [args]` (t2::Game, see src/main.cpp), `quit`
+  (frame may be `+N`)
 - Debug env: T2_BLITLOG, T2_AUDLOG=frame, T2_COPDUMP=frame (COP1+COP2
   lists), T2_WATCHB=addr, T2_WATCHPC=addr, T2_SPRDUMP
 - Headless: `SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/turrican2

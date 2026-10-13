@@ -44,11 +44,22 @@ cmake --build build
 
 ### Debug menu (Start)
 
-Host-only overlay (does not touch game code): restart, kill, experimental
-pokes, always auto-fire, freeze, **display centre mode** (Off by default;
-Auto is unstable on black scenes; fixed +8/+16/+24/+32 shifts), and
-**10 save-state slots** (Save / Load). States are stored under the save
-directory as `states/slotN.t2ss`.
+Host-side overlay. Game options use the decoded memory map of the game
+(docs/memory_map.md) and the game's own routines, so the HUD follows:
+
+- **Level select** (left/right: 1-1 … 5-2): in a game it warps there at
+  once (through the game's stage-complete path); on the title screen the
+  next game starts there
+- **Weapon** (left/right: Multiple 0–2, Laser 0–4, Rebound 0–3), max all
+  weapons
+- extra life, lives = 99, infinite lives, full energy, infinite energy,
+  god mode (no damage; the timer stops too), refill power line, wheel
+  bombs = 99, continues = 5, time = 999, the game's built-in cheat flag
+  (no life loss, no score)
+- give up (Esc, as in the game), restart, always auto-fire, freeze,
+  **display centre mode** (Off by default; Auto is unstable on black
+  scenes; fixed +8/+16/+24/+32 shifts), and **10 save-state slots**
+  (Save / Load), stored under the save directory as `states/slotN.t2ss`
 
 ## License
 
