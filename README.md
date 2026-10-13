@@ -32,7 +32,8 @@ cmake --build build
 | Input | Function |
 |-------|----------|
 | Cursor keys / left stick / D-pad | joystick in port 2 (move / jump / duck) |
-| Right Ctrl / gamepad **Y** | fire (hold = surround shot) |
+| Right Ctrl | fire (hold = surround shot after a moment, as in the game) |
+| Gamepad **Y** | fire with the surround shot at once |
 | Gamepad **A** | jump (joystick up) |
 | Gamepad **X** | auto-fire (pulsed fire taps) |
 | Gamepad **B** / Space | powerline (secondary); down+B = gyroscope |
@@ -44,7 +45,8 @@ cmake --build build
 
 ### Debug menu (Start)
 
-Host-side overlay. Game options use the decoded memory map of the game
+Host-side overlay; the game is paused while it is open (game actions take
+effect on resume). Game options use the decoded memory map of the game
 (docs/memory_map.md) and the game's own routines, so the HUD follows:
 
 - **Level select** (left/right: 1-1 … 5-2): in a game it warps there at
@@ -57,8 +59,9 @@ Host-side overlay. Game options use the decoded memory map of the game
   bombs = 99, continues = 5, time = 999, the game's built-in cheat flag
   (no life loss, no score)
 - give up (Esc, as in the game), restart, always auto-fire, freeze,
-  **display centre mode** (Off by default; Auto is unstable on black
-  scenes; fixed +8/+16/+24/+32 shifts), and **10 save-state slots**
+  **centre display** (on by default: the area the Amiga displays, taken
+  from its display window and data fetch registers, is centred in the
+  window; off shows the Amiga's own position), and **10 save-state slots**
   (Save / Load), stored under the save directory as `states/slotN.t2ss`
 
 ## License

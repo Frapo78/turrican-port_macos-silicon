@@ -20,6 +20,7 @@ namespace {
 //   key <SDL key name> [down|up|tap]   joy <subset of "udlrf">
 //   mouse <dx> <dy>   lmb|rmb <0|1>   shot <file.ppm>   quit
 //   dump <file>  (chip RAM, then slow RAM)   covreset  (restart --coverage)
+//   surround <0|1>  (fire with the instant surround beam, as gamepad Y)
 //   game <action> [args]: t2::Game actions, as in the debug menu:
 //     warp <world 1-5> <stage 1-3>, lives <n>, addlife, energy, weapon <1-3> <level>,
 //     maxweapons, powerline, bombs <n>, continues <n>, time <n>,
@@ -120,10 +121,8 @@ struct DebugMenu {
   std::string status;        // one-shot feedback line
   int status_ttl = 0;
 
-  // Vertical centre modes (host presentation only; default OFF).
-  // Fixed offsets are for known short-DIW scenes once gamemodes are mapped.
-  enum CenterMode : int { CTR_OFF = 0, CTR_AUTO, CTR_FIXED_8, CTR_FIXED_16, CTR_FIXED_24, CTR_FIXED_32, CTR_N };
-  int center_mode = CTR_OFF;
+  // Centre the displayed area (Machine::display_rect) in the window.
+  bool center = true;
   int save_slot = 0;         // 0..9
   std::string state_dir;     // directory for slot files
 
@@ -159,28 +158,6 @@ struct DebugMenu {
   t2::Game* game = nullptr;
   int level_world = 0, level_stage = 0;  // level select (0-based)
   int weapon_sel = 1, weapon_level = 0;  // weapon select
-
-  static const char* center_name(int m) {
-    switch (m) {
-      case CTR_OFF:      return "Off";
-      case CTR_AUTO:     return "Auto (unstable)";
-      case CTR_FIXED_8:  return "Fixed +8";
-      case CTR_FIXED_16: return "Fixed +16";
-      case CTR_FIXED_24: return "Fixed +24";
-      case CTR_FIXED_32: return "Fixed +32";
-      default:            return "?";
-    }
-  }
-
-  static int center_pixels(int m) {
-    switch (m) {
-      case CTR_FIXED_8:  return 8;
-      case CTR_FIXED_16: return 16;
-      case CTR_FIXED_24: return 24;
-      case CTR_FIXED_32: return 32;
-      default:           return 0;
-    }
-  }
 
   std::string label(int i) const {
     char buf[64];
@@ -220,7 +197,7 @@ struct DebugMenu {
       case I_TOGGLE_AUTOFIRE: return always_autofire ? "Always auto-fire: ON" : "Always auto-fire: OFF";
       case I_TOGGLE_FREEZE:   return frozen ? "Freeze: ON" : "Freeze: OFF";
       case I_CENTER_MODE:
-        std::snprintf(buf, sizeof(buf), "Center: %s", center_name(center_mode));
+        std::snprintf(buf, sizeof(buf), "Center display: %s", onoff(center));
         return buf;
       case I_SLOT:
         std::snprintf(buf, sizeof(buf), "Save slot: %d", save_slot);
@@ -260,11 +237,11 @@ struct DebugMenu {
   void close_menu() { open = false; }
 
   // Called every frame while open; consumes D-pad / A / B / Start.
-  bool navigate(bool up, bool down, bool left, bool right, bool a, bool b, bool start,
+  // a and b are presses (edges); Start is handled by the caller.
+  bool navigate(bool up, bool down, bool left, bool right, bool a, bool b,
                 amiga::Machine* m, const std::string& adf, const std::string& save) {
     if (cooldown > 0) --cooldown;
-    if (start && cooldown == 0) { close_menu(); return true; }
-    if (b && cooldown == 0) { close_menu(); return true; }
+    if (b) { close_menu(); return true; }
     if (cooldown == 0) {
       if (up)   { sel = (sel + I_COUNT - 1) % I_COUNT; cooldown = 8; }
       if (down) { sel = (sel + 1) % I_COUNT; cooldown = 8; }
@@ -295,19 +272,13 @@ struct DebugMenu {
             weapon_level = 0;
           }
           cooldown = 8;
-        } else if (sel == I_CENTER_MODE) {
-          center_mode = (center_mode + dir + CTR_N) % CTR_N;
-          cooldown = 8;
         } else if (sel == I_SLOT) {
           save_slot = (save_slot + dir + 10) % 10;
           cooldown = 8;
         }
       }
-      if (a) {
-        cooldown = 12;
-        apply(sel, m, adf, save);
-      }
     }
+    if (a) apply(sel, m, adf, save);
     return true;
   }
 
@@ -381,8 +352,8 @@ struct DebugMenu {
         set_status(frozen ? "Emulation frozen" : "Emulation running");
         break;
       case I_CENTER_MODE:
-        center_mode = (center_mode + 1) % CTR_N;
-        set_status(center_name(center_mode));
+        center = !center;
+        set_status(center ? "Display centred" : "Display as the Amiga shows it");
         break;
       case I_SLOT:
         save_slot = (save_slot + 1) % 10;
@@ -572,7 +543,9 @@ public:
   bool sjoy[5] = {};  // scripted joystick
   bool kjoy[5] = {};  // keyboard joystick
   bool pad_held_key[128] = {};
-  int autofire_phase_ = 0;  // frame counter for X-button auto-fire pulse
+  int autofire_phase_ = 0;
+  bool a_was_ = false, b_was_ = false, start_was_ = false;  // menu button edges
+  bool script_surround_ = false;  // script "surround 1": as if Y were held  // frame counter for X-button auto-fire pulse
   DebugMenu dbg_;
   std::string adf_path_;
   std::string save_path_;
@@ -664,19 +637,28 @@ public:
     // Joystick in port 2 from script, keyboard and game controller.
     bool up = sjoy[0] || kjoy[0], down = sjoy[1] || kjoy[1], left = sjoy[2] || kjoy[2];
     bool right = sjoy[3] || kjoy[3], fire = sjoy[4] || kjoy[4];
-    bool pad_a = false, pad_b = false, pad_start = false;
-    if (pad) poll_gamepad(up, down, left, right, fire, pad_a, pad_b, pad_start);
+    bool pad_a = false, pad_b = false, pad_start = false, pad_y = false;
+    if (pad) poll_gamepad(up, down, left, right, fire, pad_a, pad_b, pad_start, pad_y);
+    // Y: surround beam at once (the game needs fire held for 20 frames).
+    if (dbg_.game) dbg_.game->instant_surround = (pad_y || script_surround_) && !dbg_.open;
+    if (script_surround_) fire = true;
+
+    // Menu buttons act on presses, not while held: a held Start must not
+    // reopen/close the menu, a held A must not repeat an action.
+    bool a_pressed = pad_a && !a_was_, b_pressed = pad_b && !b_was_;
+    bool start_pressed = pad_start && !start_was_;
+    a_was_ = pad_a;
+    b_was_ = pad_b;
+    start_was_ = pad_start;
 
     // Start opens / closes the host-side debug menu (not passed to the game).
-    static bool start_was = false;
-    if (pad_start && !start_was) {
+    if (start_pressed) {
       if (dbg_.open) dbg_.close_menu();
       else dbg_.open_menu();
     }
-    start_was = pad_start;
 
     if (dbg_.open) {
-      dbg_.navigate(up, down, left, right, pad_a, pad_b, pad_start, machine, adf_path_, save_path_);
+      dbg_.navigate(up, down, left, right, a_pressed, b_pressed, machine, adf_path_, save_path_);
       // While the menu is open, neutralise game input.
       machine->joy_state(false, false, false, false, false);
       return;
@@ -690,7 +672,7 @@ public:
   }
 
   void poll_gamepad(bool& up, bool& down, bool& left, bool& right, bool& fire,
-                    bool& out_a, bool& out_b, bool& out_start) {
+                    bool& out_a, bool& out_b, bool& out_start, bool& out_y) {
     auto btn = [&](SDL_GameControllerButton b) { return SDL_GameControllerGetButton(pad, b) != 0; };
     constexpr int dead = 12000;
     int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
@@ -705,8 +687,9 @@ public:
     out_start = btn(SDL_CONTROLLER_BUTTON_START);
     // A = jump (joystick up). Does not affect the fire line.
     if (out_a && !dbg_.open) up = true;
-    // Y = regular fire (short press / hold = surround as the game already does).
-    if (btn(SDL_CONTROLLER_BUTTON_Y)) fire = true;
+    // Y = fire with the surround beam at once (t2::Game::instant_surround).
+    out_y = btn(SDL_CONTROLLER_BUTTON_Y);
+    if (out_y) fire = true;
     // X = auto-fire: pulse the fire button (~12 Hz).
     if (btn(SDL_CONTROLLER_BUTTON_X)) {
       autofire_phase_ = (autofire_phase_ + 1) % 8;
@@ -731,59 +714,25 @@ public:
     }
   }
 
-  // Optional host-only vertical shift of the active display region.
-  // Default is OFF — auto mode is unstable on mostly-black scenes; fixed
-  // offsets can be chosen from the debug menu once gamemodes are known.
+  // Centre the part of the frame that shows bitplanes (taken from the
+  // display window and data fetch registers, Machine::display_rect) in
+  // the window; the Amiga position of the game screen is off-centre (e.g.
+  // in-game 304×216 at x 16).
   void apply_center(uint32_t* fb) {
-    const int mode = dbg_.center_mode;
-    if (mode == DebugMenu::CTR_OFF) return;
-
-    int shift = 0;
-    if (mode == DebugMenu::CTR_AUTO) {
-      auto row_mostly_black = [&](int y) {
-        const uint32_t* row = fb + y * amiga::FB_W;
-        int lit = 0;
-        for (int x = 0; x < amiga::FB_W; x += 2)
-          if ((row[x] & 0x00F8F8F8u) != 0) ++lit;
-        return lit < 6;
-      };
-      int top = 0, bot = amiga::VIEW_H - 1;
-      while (top < bot && row_mostly_black(top)) ++top;
-      while (bot > top && row_mostly_black(bot)) --bot;
-      int h = bot - top + 1;
-      if (h < 64 || h >= amiga::VIEW_H) return;
-      if (center_top_ < 0 || (top - center_top_ > 2) || (center_top_ - top > 2) ||
-          (bot - center_bot_ > 2) || (center_bot_ - bot > 2)) {
-        center_top_ = top;
-        center_bot_ = bot;
-      } else {
-        top = center_top_;
-        bot = center_bot_;
-        h = bot - top + 1;
-      }
-      shift = (amiga::VIEW_H - h) / 2 - top;
-    } else {
-      shift = DebugMenu::center_pixels(mode);
-    }
-    if (shift == 0) return;
-
+    if (!dbg_.center) return;
+    const amiga::DisplayRect& r = machine->display_rect();
+    if (r.empty()) return;
+    int dx = (amiga::FB_W - (r.x1 - r.x0)) / 2 - r.x0;
+    int dy = (amiga::VIEW_H - (r.y1 - r.y0)) / 2 - r.y0;
     static std::vector<uint32_t> tmp;
-    tmp.assign(amiga::FB_W * amiga::VIEW_H, 0u);
-    if (shift > 0) {
-      // Move content down by `shift` lines (black fills the top).
-      int rows = amiga::VIEW_H - shift;
-      std::copy(fb, fb + rows * amiga::FB_W, tmp.begin() + shift * amiga::FB_W);
-    } else {
-      int up = -shift;
-      int rows = amiga::VIEW_H - up;
-      std::copy(fb + up * amiga::FB_W, fb + amiga::VIEW_H * amiga::FB_W, tmp.begin());
-      // bottom stays black
-      (void)rows;
-    }
+    tmp.assign(size_t(amiga::FB_W) * amiga::VIEW_H, 0xFF000000u);
+    // Only the displayed area moves; the border around it is black.
+    for (int sy = r.y0; sy < r.y1; ++sy)
+      for (int sx = r.x0; sx < r.x1; ++sx)
+        tmp[size_t(sy + dy) * amiga::FB_W + size_t(sx + dx)] = fb[sy * amiga::FB_W + sx];
     std::copy(tmp.begin(), tmp.end(), fb);
   }
 
-  int center_top_ = -1, center_bot_ = -1;
 
   void frame(const uint32_t* fb) override {
     ++frame_no;
@@ -808,17 +757,23 @@ public:
     }
     if (quit_after >= 0 && frame_no >= quit_after) quit = true;
     handle_events();
-    // Freeze: keep presenting the last frame and servicing the menu until
-    // the user unfreezes (host-only; does not alter Machine state).
-    while (dbg_.frozen && !quit) {
-      SDL_Delay(16);
-      handle_events();
-      dbg_.draw(overlay.data());
-      SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
-      SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
-      SDL_RenderClear(ren);
-      SDL_RenderCopy(ren, tex, nullptr, nullptr);
-      SDL_RenderPresent(ren);
+    // The game is paused while the menu is open or frozen: keep presenting
+    // the last frame and servicing the menu (host-only; the machine does
+    // not run, so menu actions on the game take effect on resume).
+    if ((dbg_.frozen || dbg_.open) && !quit) {
+      std::vector<uint32_t> held(fb, fb + amiga::FB_W * amiga::VIEW_H);
+      apply_center(held.data());
+      while ((dbg_.frozen || dbg_.open) && !quit) {
+        SDL_Delay(16);
+        handle_events();
+        overlay = held;  // redraw the menu on a clean copy of the frame
+        dbg_.draw(overlay.data());
+        SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
+        SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+        SDL_RenderClear(ren);
+        SDL_RenderCopy(ren, tex, nullptr, nullptr);
+        SDL_RenderPresent(ren);
+      }
     }
     if (quit) throw amiga::QuitRequested{};
     // Pace to the PAL frame rate unless fast-forwarding.
@@ -877,6 +832,8 @@ public:
         if (sz == 'l') machine->w32(a, v);
         else if (sz == 'w') machine->w16(a, uint16_t(v));
         else machine->w8(a, uint8_t(v));
+      } else if (e.cmd == "surround") {
+        script_surround_ = e.args.empty() || e.args[0] != "0";
       } else if (e.cmd == "game" && !e.args.empty() && dbg_.game) {
         run_game_command(*dbg_.game, e.args);
       } else if (e.cmd == "dump" && !e.args.empty()) {

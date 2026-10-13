@@ -44,6 +44,12 @@ constexpr int FB_VSTART = 0x2C;  // beam line of fb y=0
 
 struct QuitRequested {};
 
+// A rectangle of the view in view pixels: [x0, x1) × [y0, y1).
+struct DisplayRect {
+  int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  bool empty() const { return x1 <= x0 || y1 <= y0; }
+};
+
 // INTENA/INTREQ bits
 enum : uint16_t {
   INT_TBE = 1 << 0, INT_DSKBLK = 1 << 1, INT_SOFT = 1 << 2, INT_PORTS = 1 << 3,
@@ -180,6 +186,12 @@ public:
   void set_pc_hook(uint32_t pc, PcHook fn);
   void clear_pc_hooks() { pc_hooks_.clear(); }
 
+  // Where the last frame displayed bitplanes: the lines with bitplane DMA
+  // inside the display window, horizontally DIWSTRT/DIWSTOP clipped to the
+  // fetched data. Frames without bitplanes keep the previous rectangle.
+  // Taken from the hardware state, so it does not depend on the picture.
+  const DisplayRect& display_rect() const { return display_rect_; }
+
   int ram_hash_every = 0;       // log a hash of chip RAM every N frames
   uint64_t frame_count() const { return frame_count_; }
 
@@ -286,8 +298,8 @@ private:
   // display
   std::vector<uint32_t> fb_;
   std::vector<uint32_t> view_;
-  int first_bpl_line_ = -1;  // first line with bitplanes in the current frame
-  int view_top_ = 0;         // fb row shown at the top of the view
+  DisplayRect frame_rect_;    // being collected for the current frame
+  DisplayRect display_rect_;  // of the last frame that showed bitplanes
   // audio
   std::vector<int16_t> audio_buf_;
   double audio_frac_ = 0;

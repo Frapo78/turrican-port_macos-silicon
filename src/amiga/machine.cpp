@@ -263,11 +263,9 @@ void Machine::idle_lines(int n) {
 
 void Machine::end_of_frame() {
   hle_->before_frame();
-  if (first_bpl_line_ >= 0)
-    view_top_ = std::clamp(first_bpl_line_ - FB_VSTART, 0, FB_H - VIEW_H);
-  std::copy(fb_.begin() + long(view_top_) * FB_W, fb_.begin() + long(view_top_ + VIEW_H) * FB_W,
-            view_.begin());
-  first_bpl_line_ = -1;
+  std::copy(fb_.begin(), fb_.begin() + long(VIEW_H) * FB_W, view_.begin());
+  if (!frame_rect_.empty()) display_rect_ = frame_rect_;
+  frame_rect_ = DisplayRect{};
   ++frame_count_;
   if (ram_hash_every > 0 && frame_count_ % uint64_t(ram_hash_every) == 0) {
     uint64_t h = 1469598103934665603ull;
@@ -470,7 +468,7 @@ bool Machine::load_state(const std::string& path) {
     free_list_[a] = s;
   }
   // Display / audio buffers are regenerated next frame.
-  first_bpl_line_ = -1;
+  frame_rect_ = DisplayRect{};
   key_hold_lines_ = 0;
   return bool(in);
 }

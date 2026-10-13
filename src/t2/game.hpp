@@ -75,6 +75,10 @@ public:
   bool infinite_lives = false;
   bool infinite_energy = false;
   bool god_mode = false;              // also stops the timer
+  // Set by the host every frame while its "surround" button is held (with
+  // the fire line): the surround beam starts at once instead of after 20
+  // frames of holding fire.
+  bool instant_surround = false;
   void set_cheat_flag(bool on);
   bool cheat_flag() const;
 
@@ -95,6 +99,7 @@ private:
   void frame_hook();       // top of the game's per-frame loop
   void world_load_hook();  // new game / next world: about to load the world
   void return_hook();      // an injected call returned
+  void surround_hook();    // the beam's "fire held long enough?" check
   void queue(Action a) { actions_.push_back(std::move(a)); }
   // Call a game routine from the frame hook (registers are preserved).
   void call(uint32_t addr, uint32_t d0 = 0, uint32_t d1 = 0, uint32_t a0 = 0) {

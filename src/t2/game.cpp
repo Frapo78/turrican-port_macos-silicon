@@ -10,6 +10,9 @@ constexpr uint32_t LOOP_TOP = 0x529A;      // per-frame game loop: tst.b $139
 constexpr uint32_t LOOP_TOP_ALT = 0x5304;  // loop variant while $139 < 0: bsr $5fb2
 constexpr uint32_t LOAD_WORLD = 0x5230;    // bsr $630 (new game, next world)
 constexpr uint32_t NEW_GAME = 0x51BC;      // clr.w $5ce2
+constexpr uint32_t SURROUND_CHECK = 0x467E;  // cmpi.w #20,$de: fire held 20 frames → beam
+constexpr uint32_t FIRE_HELD = 0xDB, FIRE_FRAMES = 0xDE;
+constexpr uint16_t SURROUND_FRAMES = 20;
 // Game routines called by the host.
 constexpr uint32_t ADD_LIFE = 0x74B4;
 constexpr uint32_t DRAW_LIVES = 0x7514;
@@ -29,6 +32,7 @@ constexpr Sig SIGS[] = {
     {LOOP_TOP_ALT, 0x6100, 0x0CAC},
     {LOAD_WORLD, 0x6100, 0xB3FE},
     {NEW_GAME, 0x4278, 0x5CE2},
+    {SURROUND_CHECK, 0x0C78, SURROUND_FRAMES},
     {ADD_LIFE, 0x41F9, 0x0001},
     {REFILL_ENERGY, 0x41F9, 0x0001},
 };
@@ -48,6 +52,7 @@ Game::Game(amiga::Machine& m) : m_(m) {
   m_.set_pc_hook(LOOP_TOP_ALT, [this] { frame_hook(); });
   m_.set_pc_hook(LOAD_WORLD, [this] { world_load_hook(); });
   m_.set_pc_hook(CALL_RETURN, [this] { return_hook(); });
+  m_.set_pc_hook(SURROUND_CHECK, [this] { surround_hook(); });
 }
 
 bool Game::main_loaded() const {
@@ -123,6 +128,13 @@ void Game::return_hook() {
   if (!in_call_) return;
   in_call_ = false;
   m_.cpu.restore(saved_);  // back to the loop top: the frame hook continues
+}
+
+void Game::surround_hook() {
+  // $DE counts the frames fire has been held (input routine $32FA, which
+  // clears it on release); the beam routine compares it with 20 here.
+  if (!instant_surround || !m_.r8(FIRE_HELD) || !main_loaded()) return;
+  if (m_.r16(FIRE_FRAMES) < SURROUND_FRAMES) m_.w16(FIRE_FRAMES, SURROUND_FRAMES);
 }
 
 void Game::world_load_hook() {

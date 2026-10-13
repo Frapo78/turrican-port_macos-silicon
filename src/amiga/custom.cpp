@@ -421,8 +421,24 @@ void Machine::render_line(int line) {
   }
   for (int x = 0; x < FB_W; ++x) out[x] = bg;
   uint8_t pf[FB_W] = {};  // playfield priority per pixel (0 = transparent)
-  if (active && first_bpl_line_ < 0) first_bpl_line_ = line;
-  if (active) render_playfield(out, pf, nplanes, hires, ham, dpf, hstart, hstop);
+  if (active) {
+    // Displayed part of the line: the display window clipped to the
+    // fetched data (same positions as render_playfield).
+    int nwords = hires ? (cs_.ddfstop_ - cs_.ddfstrt_) / 4 + 2 : (cs_.ddfstop_ - cs_.ddfstrt_) / 8 + 1;
+    if (nwords <= 0 || nwords > 64) nwords = 20;
+    int x0 = hires ? cs_.ddfstrt_ * 2 + 9 : cs_.ddfstrt_ * 2 + 17;
+    int x1 = x0 + (hires ? nwords * 8 : nwords * 16);
+    int l = std::clamp(std::max(hstart, x0) - FB_HSTART, 0, FB_W);
+    int r = std::clamp(std::min(hstop, x1) - FB_HSTART, 0, FB_W);
+    if (r > l && fy < VIEW_H) {
+      DisplayRect& d = frame_rect_;
+      if (d.empty()) d = {l, fy, r, fy + 1};
+      d.x0 = std::min(d.x0, l);
+      d.x1 = std::max(d.x1, r);
+      d.y1 = fy + 1;
+    }
+    render_playfield(out, pf, nplanes, hires, ham, dpf, hstart, hstop);
+  }
   render_sprites(line, out, pf);
 }
 
