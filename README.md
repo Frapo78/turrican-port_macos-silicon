@@ -46,8 +46,18 @@ cmake --build build
 ### Debug menu (Start)
 
 Host-side overlay; the game is paused while it is open (game actions take
-effect on resume). Game options use the decoded memory map of the game
-(docs/memory_map.md) and the game's own routines, so the HUD follows:
+effect on resume). B goes back from the cheats page, and closes the menu
+on the main page.
+
+Main page: resume, restart, give up (Esc, as in the game), **Cheats >**,
+always auto-fire, freeze, **centre display** (on by default: the area the
+Amiga displays, taken from its display window and data fetch registers,
+is centred in the window; off shows the Amiga's own position), and
+**10 save-state slots** (Save / Load), stored under the save directory as
+`states/slotN.t2ss`.
+
+Cheats page (uses the decoded memory map of the game, docs/memory_map.md,
+and the game's own routines, so the HUD follows):
 
 - **Level select** (left/right: 1-1 … 5-2): in a game it warps there at
   once (through the game's stage-complete path); on the title screen the
@@ -58,11 +68,6 @@ effect on resume). Game options use the decoded memory map of the game
   god mode (no damage; the timer stops too), refill power line, wheel
   bombs = 99, continues = 5, time = 999, the game's built-in cheat flag
   (no life loss, no score)
-- give up (Esc, as in the game), restart, always auto-fire, freeze,
-  **centre display** (on by default: the area the Amiga displays, taken
-  from its display window and data fetch registers, is centred in the
-  window; off shows the Amiga's own position), and **10 save-state slots**
-  (Save / Load), stored under the save directory as `states/slotN.t2ss`
 
 ## License
 

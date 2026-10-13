@@ -150,8 +150,23 @@ struct DebugMenu {
     I_SLOT,
     I_SAVE,
     I_LOAD,
+    I_CHEATS,  // opens the cheats page
+    I_BACK,    // back to the main page
     I_COUNT
   };
+  // Pages: the main menu and the cheats submenu; `sel` indexes the page.
+  enum Page : int { P_MAIN = 0, P_CHEATS };
+  static const std::vector<int>& page_items(int p) {
+    static const std::vector<int> main_items = {
+        I_RESUME, I_RESTART, I_GIVE_UP, I_CHEATS, I_TOGGLE_AUTOFIRE, I_TOGGLE_FREEZE,
+        I_CENTER_MODE, I_SLOT, I_SAVE, I_LOAD};
+    static const std::vector<int> cheat_items = {
+        I_BACK, I_LEVEL, I_WEAPON, I_MAX_WEAPONS, I_ADD_LIFE, I_LIVES_99, I_INF_LIVES,
+        I_FULL_ENERGY, I_INF_ENERGY, I_GOD, I_POWER_LINE, I_BOMBS, I_CONTINUES, I_TIME, I_CHEAT};
+    return p == P_CHEATS ? cheat_items : main_items;
+  }
+  const std::vector<int>& items() const { return page_items(page); }
+  int page = P_MAIN;
   static constexpr int VISIBLE = 15;  // rows shown at once (the list scrolls)
   int scroll = 0;
 
@@ -204,6 +219,8 @@ struct DebugMenu {
         return buf;
       case I_SAVE:            return "Save state";
       case I_LOAD:            return "Load state";
+      case I_CHEATS:          return "Cheats >";
+      case I_BACK:            return "< Back";
       default:                return "?";
     }
   }
@@ -221,10 +238,17 @@ struct DebugMenu {
     return state_dir.empty() ? std::string(name) : (state_dir + "/" + name);
   }
 
+  void show_page(int p, int item = -1) {
+    page = p;
+    const auto& it = items();
+    auto f = std::find(it.begin(), it.end(), item);
+    sel = f == it.end() ? 0 : int(f - it.begin());
+    scroll = std::max(0, sel - VISIBLE + 1);
+  }
+
   void open_menu() {
     open = true;
-    sel = 0;
-    scroll = 0;
+    show_page(P_MAIN);
     cooldown = 8;
     if (game && game->in_game()) {
       level_world = std::clamp(game->world(), 0, t2::NUM_WORLDS - 1);
@@ -241,16 +265,23 @@ struct DebugMenu {
   bool navigate(bool up, bool down, bool left, bool right, bool a, bool b,
                 amiga::Machine* m, const std::string& adf, const std::string& save) {
     if (cooldown > 0) --cooldown;
-    if (b) { close_menu(); return true; }
+    if (b) {
+      if (page == P_CHEATS) show_page(P_MAIN, I_CHEATS);
+      else close_menu();
+      return true;
+    }
+    const int count = int(items().size());
+    auto current = [&] { return items()[size_t(sel)]; };
     if (cooldown == 0) {
-      if (up)   { sel = (sel + I_COUNT - 1) % I_COUNT; cooldown = 8; }
-      if (down) { sel = (sel + 1) % I_COUNT; cooldown = 8; }
+      if (up)   { sel = (sel + count - 1) % count; cooldown = 8; }
+      if (down) { sel = (sel + 1) % count; cooldown = 8; }
       if (sel < scroll) scroll = sel;
       if (sel >= scroll + VISIBLE) scroll = sel - VISIBLE + 1;
       // Left/right adjust the current item when it is a cycleable option.
       if (left || right) {
         int dir = right ? 1 : -1;
-        if (sel == I_LEVEL) {
+        const int item = current();
+        if (item == I_LEVEL) {
           // Steps through 1-1, 1-2, 2-1, ... 5-2.
           level_stage += dir;
           if (level_stage < 0) {
@@ -261,7 +292,7 @@ struct DebugMenu {
             level_stage = 0;
           }
           cooldown = 8;
-        } else if (sel == I_WEAPON) {
+        } else if (item == I_WEAPON) {
           // Steps through each weapon's levels: Multiple 0..2, Laser 0..4, ...
           weapon_level += dir;
           if (weapon_level < 0) {
@@ -272,13 +303,13 @@ struct DebugMenu {
             weapon_level = 0;
           }
           cooldown = 8;
-        } else if (sel == I_SLOT) {
+        } else if (item == I_SLOT) {
           save_slot = (save_slot + dir + 10) % 10;
           cooldown = 8;
         }
       }
     }
-    if (a) apply(sel, m, adf, save);
+    if (a) apply(current(), m, adf, save);
     return true;
   }
 
@@ -291,6 +322,12 @@ struct DebugMenu {
     switch (item) {
       case I_RESUME:
         close_menu();
+        break;
+      case I_CHEATS:
+        show_page(P_CHEATS);
+        break;
+      case I_BACK:
+        show_page(P_MAIN, I_CHEATS);
         break;
       case I_RESTART:
         if (m->boot(adf, save)) set_status("Restarted");
@@ -489,7 +526,10 @@ struct DebugMenu {
     // Dim the playfield.
     for (int i = 0; i < amiga::FB_W * amiga::VIEW_H; ++i)
       fb[i] = (fb[i] >> 2) & 0x3F3F3F3Fu;
-    const int box_x = 24, box_y = 24, box_w = 272, box_h = 20 + VISIBLE * 12 + 16;
+    const auto& it = items();
+    const int count = int(it.size());
+    const int rows = std::min(count, VISIBLE);
+    const int box_x = 24, box_y = 24, box_w = 272, box_h = 20 + rows * 12 + 16;
     for (int y = box_y; y < box_y + box_h && y < amiga::VIEW_H; ++y)
       for (int x = box_x; x < box_x + box_w && x < amiga::FB_W; ++x)
         fb[y * amiga::FB_W + x] = 0xFF1A1A2Eu;
@@ -505,18 +545,19 @@ struct DebugMenu {
       int xb = box_x + box_w - 1;
       if (xb >= 0 && xb < amiga::FB_W) fb[y * amiga::FB_W + xb] = 0xFFAAAAFFu;
     }
-    draw_text(fb, box_x + 8, box_y + 6, "DEBUG MENU", 0xFFFFFF55u);
+    draw_text(fb, box_x + 8, box_y + 6, page == P_CHEATS ? "DEBUG MENU > CHEATS" : "DEBUG MENU",
+              0xFFFFFF55u);
     bool playing = game && game->in_game();
-    for (int row = 0; row < VISIBLE && scroll + row < I_COUNT; ++row) {
-      int i = scroll + row;
-      uint32_t col = (i == sel) ? 0xFFFFFF00u : (needs_game(i) && !playing) ? 0xFF666677u : 0xFFCCCCCCu;
+    for (int row = 0; row < rows && scroll + row < count; ++row) {
+      int n = scroll + row, i = it[size_t(n)];
+      uint32_t col = (n == sel) ? 0xFFFFFF00u : (needs_game(i) && !playing) ? 0xFF666677u : 0xFFCCCCCCu;
       char line[72];
-      std::snprintf(line, sizeof(line), "%c %s", (i == sel) ? '>' : ' ', label(i).c_str());
+      std::snprintf(line, sizeof(line), "%c %s", (n == sel) ? '>' : ' ', label(i).c_str());
       draw_text(fb, box_x + 8, box_y + 20 + row * 12, line, col);
     }
     if (scroll > 0) draw_text(fb, box_x + box_w - 14, box_y + 20, "^", 0xFF8888AAu);
-    if (scroll + VISIBLE < I_COUNT)
-      draw_text(fb, box_x + box_w - 14, box_y + 20 + (VISIBLE - 1) * 12, "v", 0xFF8888AAu);
+    if (scroll + VISIBLE < count)
+      draw_text(fb, box_x + box_w - 14, box_y + 20 + (rows - 1) * 12, "v", 0xFF8888AAu);
     draw_text(fb, box_x + 8, box_y + box_h - 12, "A=OK  B/Start=Back  L/R=adj", 0xFF8888AAu);
   }
 };
