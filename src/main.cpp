@@ -100,6 +100,240 @@ int amiga_rawkey(SDL_Scancode sc) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Host-side debug menu (Start button).  Fully separate from the emulated
+// game code — only uses Machine::boot / key_event / w8 for actions that are
+// safe with the current reverse-engineering state.
+// ---------------------------------------------------------------------------
+struct DebugMenu {
+  bool open = false;
+  int sel = 0;
+  int cooldown = 0;          // frames to ignore D-pad after a move
+  bool always_autofire = false;
+  bool frozen = false;       // stop advancing the machine
+  std::string status;        // one-shot feedback line
+  int status_ttl = 0;
+
+  // Candidates from MAIN binary scan (move.b #3,abs.w).  Experimental.
+  static constexpr uint32_t CAND_LIVES_A = 0x25c2;
+  static constexpr uint32_t CAND_LIVES_B = 0x3ce4;
+
+  enum Item : int {
+    I_RESUME = 0,
+    I_RESTART,
+    I_KILL,
+    I_MAX_LIVES,
+    I_MAX_POWER,
+    I_TOGGLE_AUTOFIRE,
+    I_TOGGLE_FREEZE,
+    I_COUNT
+  };
+
+  static const char* label(int i) {
+    switch (i) {
+      case I_RESUME:         return "Resume";
+      case I_RESTART:        return "Restart game";
+      case I_KILL:           return "Kill player (Esc)";
+      case I_MAX_LIVES:      return "Max lives (exp.)";
+      case I_MAX_POWER:      return "Max powerlines (exp.)";
+      case I_TOGGLE_AUTOFIRE:return "Toggle always auto-fire";
+      case I_TOGGLE_FREEZE:  return "Toggle freeze emulation";
+      default:               return "?";
+    }
+  }
+
+  void set_status(const char* s) { status = s; status_ttl = 90; }
+
+  void open_menu() {
+    open = true;
+    sel = 0;
+    cooldown = 8;
+  }
+
+  void close_menu() { open = false; }
+
+  // Called every frame while open; consumes D-pad / A / B / Start.
+  // Returns true if the event was eaten (do not pass to game).
+  bool navigate(bool up, bool down, bool a, bool b, bool start,
+                amiga::Machine* m, const std::string& adf, const std::string& save) {
+    if (cooldown > 0) --cooldown;
+    if (start && cooldown == 0) { close_menu(); return true; }
+    if (b && cooldown == 0) { close_menu(); return true; }
+    if (cooldown == 0) {
+      if (up)   { sel = (sel + I_COUNT - 1) % I_COUNT; cooldown = 8; }
+      if (down) { sel = (sel + 1) % I_COUNT; cooldown = 8; }
+      if (a) {
+        cooldown = 12;
+        apply(sel, m, adf, save);
+      }
+    }
+    return true;
+  }
+
+  void apply(int item, amiga::Machine* m, const std::string& adf, const std::string& save) {
+    switch (item) {
+      case I_RESUME:
+        close_menu();
+        break;
+      case I_RESTART:
+        if (m->boot(adf, save)) set_status("Restarted");
+        else set_status("Boot failed");
+        close_menu();
+        break;
+      case I_KILL:
+        // Game uses Esc as suicide / lose a life.
+        m->key_event(0x45, true);
+        m->key_event(0x45, false);
+        set_status("Kill (Esc)");
+        close_menu();
+        break;
+      case I_MAX_LIVES:
+        // Experimental: poke both candidate addresses found in MAIN.
+        m->w8(CAND_LIVES_A, 9);
+        m->w8(CAND_LIVES_B, 9);
+        set_status("Poked lives candidates = 9");
+        break;
+      case I_MAX_POWER:
+        // Powerline count is not yet mapped; leave a stub status.
+        set_status("Powerlines: address unknown");
+        break;
+      case I_TOGGLE_AUTOFIRE:
+        always_autofire = !always_autofire;
+        set_status(always_autofire ? "Always auto-fire ON" : "Always auto-fire OFF");
+        break;
+      case I_TOGGLE_FREEZE:
+        frozen = !frozen;
+        set_status(frozen ? "Emulation frozen" : "Emulation running");
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Tiny 5×7 font for the overlay (ASCII 32–90 subset, 1 bpp rows).
+  // Drawn into the 32-bit ARGB framebuffer.
+  static void draw_char(uint32_t* fb, int x, int y, char c, uint32_t col) {
+    static const uint8_t font[64][7] = {
+      // space through Z (indices 0..58); only a useful subset filled
+      {0,0,0,0,0,0,0}, // ' '
+      {0x04,0x04,0x04,0x04,0x00,0x04,0x00}, // !
+      {0x0A,0x0A,0x00,0x00,0x00,0x00,0x00}, // "
+      {0x0A,0x1F,0x0A,0x1F,0x0A,0x00,0x00}, // #
+      {0x04,0x0F,0x14,0x0E,0x05,0x1E,0x04}, // $
+      {0x18,0x19,0x02,0x04,0x08,0x13,0x03}, // %
+      {0x08,0x14,0x08,0x15,0x12,0x0D,0x00}, // &
+      {0x04,0x04,0x00,0x00,0x00,0x00,0x00}, // '
+      {0x02,0x04,0x04,0x04,0x04,0x02,0x00}, // (
+      {0x08,0x04,0x04,0x04,0x04,0x08,0x00}, // )
+      {0x00,0x0A,0x04,0x1F,0x04,0x0A,0x00}, // *
+      {0x00,0x04,0x04,0x1F,0x04,0x04,0x00}, // +
+      {0x00,0x00,0x00,0x00,0x04,0x04,0x08}, // ,
+      {0x00,0x00,0x00,0x1F,0x00,0x00,0x00}, // -
+      {0x00,0x00,0x00,0x00,0x00,0x04,0x00}, // .
+      {0x01,0x02,0x04,0x08,0x10,0x00,0x00}, // /
+      {0x0E,0x11,0x13,0x15,0x19,0x0E,0x00}, // 0
+      {0x04,0x0C,0x04,0x04,0x04,0x0E,0x00}, // 1
+      {0x0E,0x11,0x01,0x06,0x08,0x1F,0x00}, // 2
+      {0x1F,0x02,0x04,0x01,0x11,0x0E,0x00}, // 3
+      {0x02,0x06,0x0A,0x12,0x1F,0x02,0x00}, // 4
+      {0x1F,0x10,0x1E,0x01,0x11,0x0E,0x00}, // 5
+      {0x06,0x08,0x1E,0x11,0x11,0x0E,0x00}, // 6
+      {0x1F,0x01,0x02,0x04,0x08,0x08,0x00}, // 7
+      {0x0E,0x11,0x0E,0x11,0x11,0x0E,0x00}, // 8
+      {0x0E,0x11,0x11,0x0F,0x01,0x0C,0x00}, // 9
+      {0x00,0x04,0x00,0x00,0x04,0x00,0x00}, // :
+      {0x00,0x04,0x00,0x00,0x04,0x04,0x08}, // ;
+      {0x02,0x04,0x08,0x04,0x02,0x00,0x00}, // <
+      {0x00,0x00,0x1F,0x00,0x1F,0x00,0x00}, // =
+      {0x08,0x04,0x02,0x04,0x08,0x00,0x00}, // >
+      {0x0E,0x11,0x01,0x06,0x00,0x04,0x00}, // ?
+      {0x0E,0x11,0x17,0x15,0x17,0x08,0x06}, // @
+      {0x0E,0x11,0x11,0x1F,0x11,0x11,0x00}, // A
+      {0x1E,0x11,0x1E,0x11,0x11,0x1E,0x00}, // B
+      {0x0E,0x11,0x10,0x10,0x11,0x0E,0x00}, // C
+      {0x1E,0x11,0x11,0x11,0x11,0x1E,0x00}, // D
+      {0x1F,0x10,0x1E,0x10,0x10,0x1F,0x00}, // E
+      {0x1F,0x10,0x1E,0x10,0x10,0x10,0x00}, // F
+      {0x0E,0x11,0x10,0x13,0x11,0x0F,0x00}, // G
+      {0x11,0x11,0x1F,0x11,0x11,0x11,0x00}, // H
+      {0x0E,0x04,0x04,0x04,0x04,0x0E,0x00}, // I
+      {0x01,0x01,0x01,0x01,0x11,0x0E,0x00}, // J
+      {0x11,0x12,0x1C,0x12,0x11,0x11,0x00}, // K
+      {0x10,0x10,0x10,0x10,0x10,0x1F,0x00}, // L
+      {0x11,0x1B,0x15,0x11,0x11,0x11,0x00}, // M
+      {0x11,0x19,0x15,0x13,0x11,0x11,0x00}, // N
+      {0x0E,0x11,0x11,0x11,0x11,0x0E,0x00}, // O
+      {0x1E,0x11,0x11,0x1E,0x10,0x10,0x00}, // P
+      {0x0E,0x11,0x11,0x15,0x12,0x0D,0x00}, // Q
+      {0x1E,0x11,0x11,0x1E,0x12,0x11,0x00}, // R
+      {0x0E,0x11,0x08,0x04,0x11,0x0E,0x00}, // S
+      {0x1F,0x04,0x04,0x04,0x04,0x04,0x00}, // T
+      {0x11,0x11,0x11,0x11,0x11,0x0E,0x00}, // U
+      {0x11,0x11,0x11,0x11,0x0A,0x04,0x00}, // V
+      {0x11,0x11,0x11,0x15,0x1B,0x11,0x00}, // W
+      {0x11,0x11,0x0A,0x04,0x0A,0x11,0x00}, // X
+      {0x11,0x11,0x0A,0x04,0x04,0x04,0x00}, // Y
+      {0x1F,0x01,0x02,0x04,0x08,0x1F,0x00}, // Z
+    };
+    if (c < 32 || c > 90) c = '?';
+    const uint8_t* g = font[c - 32];
+    for (int row = 0; row < 7; ++row) {
+      uint8_t bits = g[row];
+      for (int colb = 0; colb < 5; ++colb) {
+        if (bits & (0x10 >> colb)) {
+          int px = x + colb, py = y + row;
+          if (px >= 0 && px < amiga::FB_W && py >= 0 && py < amiga::VIEW_H)
+            fb[py * amiga::FB_W + px] = col;
+        }
+      }
+    }
+  }
+
+  static void draw_text(uint32_t* fb, int x, int y, const char* s, uint32_t col) {
+    for (; *s; ++s, x += 6) draw_char(fb, x, y, (*s >= 'a' && *s <= 'z') ? *s - 32 : *s, col);
+  }
+
+  void draw(uint32_t* fb) {
+    if (!open && status_ttl <= 0) return;
+    if (status_ttl > 0) {
+      --status_ttl;
+      // status bar at bottom
+      for (int y = amiga::VIEW_H - 12; y < amiga::VIEW_H; ++y)
+        for (int x = 0; x < amiga::FB_W; ++x)
+          fb[y * amiga::FB_W + x] = 0xC0000000 | (fb[y * amiga::FB_W + x] & 0x00FFFFFF);
+      draw_text(fb, 4, amiga::VIEW_H - 10, status.c_str(), 0xFFFFFFFFu);
+    }
+    if (!open) return;
+    // Dim the playfield.
+    for (int i = 0; i < amiga::FB_W * amiga::VIEW_H; ++i)
+      fb[i] = (fb[i] >> 2) & 0x3F3F3F3Fu;
+    const int box_x = 40, box_y = 40, box_w = 240, box_h = 20 + I_COUNT * 12 + 16;
+    for (int y = box_y; y < box_y + box_h && y < amiga::VIEW_H; ++y)
+      for (int x = box_x; x < box_x + box_w && x < amiga::FB_W; ++x)
+        fb[y * amiga::FB_W + x] = 0xFF1A1A2Eu;
+    // border
+    for (int x = box_x; x < box_x + box_w; ++x) {
+      if (box_y >= 0 && box_y < amiga::VIEW_H) fb[box_y * amiga::FB_W + x] = 0xFFAAAAFFu;
+      int yb = box_y + box_h - 1;
+      if (yb >= 0 && yb < amiga::VIEW_H) fb[yb * amiga::FB_W + x] = 0xFFAAAAFFu;
+    }
+    for (int y = box_y; y < box_y + box_h; ++y) {
+      if (y < 0 || y >= amiga::VIEW_H) continue;
+      if (box_x >= 0 && box_x < amiga::FB_W) fb[y * amiga::FB_W + box_x] = 0xFFAAAAFFu;
+      int xb = box_x + box_w - 1;
+      if (xb >= 0 && xb < amiga::FB_W) fb[y * amiga::FB_W + xb] = 0xFFAAAAFFu;
+    }
+    draw_text(fb, box_x + 8, box_y + 6, "DEBUG MENU", 0xFFFFFF55u);
+    for (int i = 0; i < I_COUNT; ++i) {
+      uint32_t col = (i == sel) ? 0xFFFFFF00u : 0xFFCCCCCCu;
+      char line[64];
+      std::snprintf(line, sizeof(line), "%c %s", (i == sel) ? '>' : ' ', label(i));
+      draw_text(fb, box_x + 8, box_y + 20 + i * 12, line, col);
+    }
+    draw_text(fb, box_x + 8, box_y + box_h - 12, "A=OK  B/Start=Back", 0xFF8888AAu);
+  }
+};
+
 class SdlHost : public amiga::Host {
 public:
   SDL_Window* win = nullptr;
@@ -123,6 +357,9 @@ public:
   bool kjoy[5] = {};  // keyboard joystick
   bool pad_held_key[128] = {};
   int autofire_phase_ = 0;  // frame counter for X-button auto-fire pulse
+  DebugMenu dbg_;
+  std::string adf_path_;
+  std::string save_path_;
 
   bool init(int scale) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
@@ -168,7 +405,8 @@ public:
           bool down = e.type == SDL_KEYDOWN;
           SDL_Scancode sc = e.key.keysym.scancode;
           if (sc == SDL_SCANCODE_F12 && down) { set_grab(!mouse_grab); break; }
-          if (sc == SDL_SCANCODE_F11 && down) {
+          if ((sc == SDL_SCANCODE_F11 ||
+               (sc == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT))) && down) {
             Uint32 fl = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
             SDL_SetWindowFullscreen(win, fl ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
             break;
@@ -209,11 +447,33 @@ public:
     // Joystick in port 2 from script, keyboard and game controller.
     bool up = sjoy[0] || kjoy[0], down = sjoy[1] || kjoy[1], left = sjoy[2] || kjoy[2];
     bool right = sjoy[3] || kjoy[3], fire = sjoy[4] || kjoy[4];
-    if (pad) poll_gamepad(up, down, left, right, fire);
+    bool pad_a = false, pad_b = false, pad_start = false;
+    if (pad) poll_gamepad(up, down, left, right, fire, pad_a, pad_b, pad_start);
+
+    // Start opens / closes the host-side debug menu (not passed to the game).
+    static bool start_was = false;
+    if (pad_start && !start_was) {
+      if (dbg_.open) dbg_.close_menu();
+      else dbg_.open_menu();
+    }
+    start_was = pad_start;
+
+    if (dbg_.open) {
+      dbg_.navigate(up, down, pad_a, pad_b, pad_start, machine, adf_path_, save_path_);
+      // While the menu is open, neutralise game input.
+      machine->joy_state(false, false, false, false, false);
+      return;
+    }
+
+    if (dbg_.always_autofire) {
+      autofire_phase_ = (autofire_phase_ + 1) % 8;
+      if (autofire_phase_ < 3) fire = true;
+    }
     machine->joy_state(up, down, left, right, fire);
   }
 
-  void poll_gamepad(bool& up, bool& down, bool& left, bool& right, bool& fire) {
+  void poll_gamepad(bool& up, bool& down, bool& left, bool& right, bool& fire,
+                    bool& out_a, bool& out_b, bool& out_start) {
     auto btn = [&](SDL_GameControllerButton b) { return SDL_GameControllerGetButton(pad, b) != 0; };
     constexpr int dead = 12000;
     int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX);
@@ -223,26 +483,25 @@ public:
     down |= ly > dead || btn(SDL_CONTROLLER_BUTTON_DPAD_DOWN);
     left |= lx < -dead || btn(SDL_CONTROLLER_BUTTON_DPAD_LEFT);
     right |= lx > dead || btn(SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
+    out_a = btn(SDL_CONTROLLER_BUTTON_A);
+    out_b = btn(SDL_CONTROLLER_BUTTON_B);
+    out_start = btn(SDL_CONTROLLER_BUTTON_START);
     // A = jump (joystick up). Does not affect the fire line.
-    if (btn(SDL_CONTROLLER_BUTTON_A)) up = true;
+    if (out_a && !dbg_.open) up = true;
     // Y = regular fire (short press / hold = surround as the game already does).
-    // Instant surround would need a game-code poke; leave as plain fire.
     if (btn(SDL_CONTROLLER_BUTTON_Y)) fire = true;
-    // X = auto-fire: pulse the fire button (~12 Hz) so the game sees brief
-    // taps instead of a continuous hold (which would engage surround).
+    // X = auto-fire: pulse the fire button (~12 Hz).
     if (btn(SDL_CONTROLLER_BUTTON_X)) {
       autofire_phase_ = (autofire_phase_ + 1) % 8;
       if (autofire_phase_ < 3) fire = true;
-    } else {
+    } else if (!dbg_.always_autofire) {
       autofire_phase_ = 0;
     }
     // Buttons that synthesize Amiga keyboard events (held while pressed).
-    // B = secondary (Space → powerline / gyro when combined with down).
-    // Back = Esc (quit to intro). Start / shoulders kept as useful extras.
+    // Start is reserved for the debug menu and is not mapped to a key.
     static const struct { SDL_GameControllerButton b; int key; } map[] = {
         {SDL_CONTROLLER_BUTTON_B, 0x40},              // Space (powerline / 2nd fire)
         {SDL_CONTROLLER_BUTTON_BACK, 0x45},           // Esc
-        {SDL_CONTROLLER_BUTTON_START, 0x59},          // F10
         {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, 0x50},   // F1
         {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, 0x51},  // F2
     };
@@ -250,27 +509,45 @@ public:
       bool d = btn(m.b);
       if (d != pad_held_key[m.key]) {
         pad_held_key[m.key] = d;
-        machine->key_event(uint8_t(m.key), d);
+        if (!dbg_.open) machine->key_event(uint8_t(m.key), d);
       }
     }
   }
 
   void frame(const uint32_t* fb) override {
     ++frame_no;
-    SDL_UpdateTexture(tex, nullptr, fb, amiga::FB_W * 4);
+    // Mutable copy so the host-side debug overlay can draw without touching
+    // the machine's view buffer.
+    static std::vector<uint32_t> overlay;
+    overlay.assign(fb, fb + amiga::FB_W * amiga::VIEW_H);
+    dbg_.draw(overlay.data());
+
+    SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
     SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
     SDL_RenderClear(ren);
     SDL_RenderCopy(ren, tex, nullptr, nullptr);
     SDL_RenderPresent(ren);
-    if (frame_no == screenshot_frame) save_screenshot(fb);
+    if (frame_no == screenshot_frame) save_screenshot(overlay.data());
     if (!pending_shot.empty()) {
       std::swap(pending_shot, screenshot_path);
-      save_screenshot(fb);
+      save_screenshot(overlay.data());
       std::swap(pending_shot, screenshot_path);
       pending_shot.clear();
     }
     if (quit_after >= 0 && frame_no >= quit_after) quit = true;
     handle_events();
+    // Freeze: keep presenting the last frame and servicing the menu until
+    // the user unfreezes (host-only; does not alter Machine state).
+    while (dbg_.frozen && !quit) {
+      SDL_Delay(16);
+      handle_events();
+      dbg_.draw(overlay.data());
+      SDL_UpdateTexture(tex, nullptr, overlay.data(), amiga::FB_W * 4);
+      SDL_SetRenderDrawColor(ren, 0, 0, 0, 255);
+      SDL_RenderClear(ren);
+      SDL_RenderCopy(ren, tex, nullptr, nullptr);
+      SDL_RenderPresent(ren);
+    }
     if (quit) throw amiga::QuitRequested{};
     // Pace to the PAL frame rate unless fast-forwarding.
     uint64_t freq = SDL_GetPerformanceFrequency();
@@ -399,10 +676,10 @@ void usage() {
           "  --ram-hash N     log a RAM hash every N frames\n"
           "  --script FILE    scripted input (see source)\n"
           "  --grab           capture the mouse at start (F12 toggles)\n"
-          "keys: cursor keys/right Ctrl = joystick, F11 fullscreen,\n"
+          "keys: cursor keys/right Ctrl = joystick, F11/Alt-Enter fullscreen,\n"
           "      Pause fast-forward; all other keys go to the game.\n"
           "pad:  left stick/D-pad = move, A = jump, Y = fire, X = auto-fire,\n"
-          "      B = Space (powerline), Back = Esc.\n");
+          "      B = Space (powerline), Back = Esc, Start = debug menu.\n");
 }
 
 }  // namespace
@@ -463,6 +740,8 @@ int main(int argc, char** argv) {
 
   SdlHost host;
   host.machine = &machine;
+  host.adf_path_ = adf_path;
+  host.save_path_ = save_dir + "/disk.adf";
   host.screenshot_frame = shot_frame;
   host.screenshot_path = shot_path;
   host.quit_after = quit_after;

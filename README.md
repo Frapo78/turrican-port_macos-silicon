@@ -37,8 +37,9 @@ cmake --build build
 | Gamepad **X** | auto-fire (pulsed fire taps) |
 | Gamepad **B** / Space | powerline (secondary); down+B = gyroscope |
 | Gamepad **Back** / Esc | quit to intro |
+| Gamepad **Start** | open host debug menu (D-pad navigate, A ok, B cancel) |
 | Ctrl | pause (fire to resume) |
-| F11 | fullscreen |
+| F11 / Alt-Enter | fullscreen |
 | Pause | fast forward |
 
 ## License
