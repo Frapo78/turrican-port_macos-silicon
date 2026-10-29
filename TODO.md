@@ -5,11 +5,15 @@
   Turrican logo, title screen with music and the attract animation
 - Fire on the title → loading screen → level 1-1 playable display (HUD,
   backdrop, player); timer runs
+- R36S / PortMaster build (`nix build .#turrican2-r36s-portmaster-zip`,
+  eoan sysroot in nix/r36s.nix); the user copies T2.adf into
+  ports/turrican2/
 
 ## Open
 - [ ] Static recompilation (see AGENTS.md "Recompiler design"): port
       tools/recomp.py + src/recomp from the FA-18 port, code-byte write
       tracking, per-page validation in the dispatcher
+- [ ] R36S: device test on ArkOS (speed of the interpreter on a Cortex-A35)
 - [ ] Scenarios in tests/scenarios (title, level 1 start, play)
 - [ ] Verify gameplay input (move/jump/fire) and later levels/disk loads
 - [ ] First ~5 s of audio (RA intro) peak at a constant level: check for

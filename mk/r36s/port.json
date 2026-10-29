@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "name": "turrican2.zip",
+  "items": ["Turrican2.sh", "turrican2"],
+  "items_opt": null,
+  "attr": {
+    "title": "Turrican II",
+    "desc": "Port of the Amiga version of Turrican II (Factor 5 / Rainbow Arts, 1991): the original 68000 code on an emulated A500 chipset.",
+    "inst": "Copy your own Turrican II Amiga disk image (T2.adf) into ports/turrican2/. Version @version@.",
+    "genres": ["action", "platformer"],
+    "porter": ["Ingo Ruhnke"],
+    "image": {},
+    "rtr": false,
+    "runtime": null,
+    "reqs": [],
+    "arch": ["aarch64"]
+  }
+}

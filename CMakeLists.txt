@@ -7,7 +7,16 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-find_package(SDL2 REQUIRED)
+if(SDL2_LIBRARIES)
+  # Given directly (the R36S build links a stub against a sysroot whose
+  # CMake files name /usr, see nix/r36s.nix).
+  add_library(SDL2::SDL2 INTERFACE IMPORTED)
+  set_target_properties(SDL2::SDL2 PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${SDL2_INCLUDE_DIRS}"
+    INTERFACE_LINK_LIBRARIES "${SDL2_LIBRARIES}")
+else()
+  find_package(SDL2 REQUIRED)
+endif()
 include(GNUInstallDirs)
 
 add_library(m68k STATIC

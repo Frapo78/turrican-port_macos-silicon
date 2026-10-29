@@ -10,9 +10,10 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
+        version = "0.1.0";
         turrican2 = pkgs.stdenv.mkDerivation {
           pname = "turrican2";
-          version = "0.1.0";
+          inherit version;
           src = self;
 
           nativeBuildInputs = with pkgs; [
@@ -35,10 +36,17 @@
             platforms = platforms.linux;
           };
         };
+
+        # R36S / ArkOS: eoan sysroot, see nix/r36s.nix.
+        r36s = import ./nix/r36s.nix { inherit pkgs version; };
       in
       {
         packages.default = turrican2;
         packages.turrican2 = turrican2;
+        packages.arkos-sysroot = r36s.sysroot;
+        packages.turrican2-r36s = r36s.r36s;
+        packages.turrican2-r36s-portmaster = r36s.portmaster;
+        packages.turrican2-r36s-portmaster-zip = r36s.portmasterZip;
 
         apps.default = { type = "app"; program = "${turrican2}/bin/turrican2"; };
 
