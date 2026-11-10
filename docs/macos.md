@@ -16,8 +16,9 @@ file build/turrican2.app/Contents/MacOS/turrican2
 open build/turrican2.app
 ```
 
-An original **extended ADF** for Turrican II is required; no copyrighted
-game data is distributed in this repository.
+A user-provided Turrican II disk image is required. The importer supports
+standard and extended ADF containers; not every valid ADF contains a playable
+copy of this game's original data. No copyrighted game data is distributed.
 
 ### First launch: native disk import
 
@@ -27,14 +28,14 @@ recognized by the disk engine: **standard 880 KiB ADF**, **old UAE extended
 ADF (`UAE--ADF`)** and **new UAE extended ADF (`UAE-1ADF`)**. It validates
 the container type and copies the file into the app-owned persistent location:
 
+```text
+~/Library/Application Support/Turrican II/T2.adf
+```
+
 **Important:** a valid ADF container is not proof that the contents are
 compatible with the project's current Turrican II boot/trackloader
 implementation. Some disk variants may still fail to boot, particularly
 standard ADF dumps that cannot preserve copy-protection track data.
-
-```text
-~/Library/Application Support/Turrican II/T2.adf
-```
 
 On later launches the saved copy is loaded automatically. The app asks for
 another file only if the copy is missing or invalid. Selecting *Cancel* leaves
