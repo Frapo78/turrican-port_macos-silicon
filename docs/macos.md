@@ -16,13 +16,31 @@ file build/turrican2.app/Contents/MacOS/turrican2
 open build/turrican2.app
 ```
 
-An original **extended ADF** for Turrican II is required. On launch through
-Finder, the app asks you to locate the ADF when it cannot find `T2.adf`
-in the current working directory, `assets/`, or the configured data dir.
-You may also launch the executable from Terminal with an explicit ADF path.
+An original **extended ADF** for Turrican II is required; no copyrighted
+game data is distributed in this repository.
 
-Game saves and states default to
-`~/Library/Application Support/Turrican II/` on macOS.
+### First launch: native disk import
+
+On the first Finder launch, a standard macOS file-selection dialog asks for
+your original `T2.adf`. It checks the **UAE--ADF** extended-ADF header, then
+copies the file into the app-owned persistent location:
+
+```text
+~/Library/Application Support/Turrican II/T2.adf
+```
+
+On later launches the saved copy is loaded automatically. The app asks for
+another file only if the copy is missing or invalid. Selecting *Cancel* leaves
+the original file untouched and exits without starting the game.
+
+**Why not write into `turrican2.app/Contents/Resources`?** The installed
+`.app` bundle may be read-only and changing it after signing invalidates its
+code signature. Application Support is the native macOS per-user app data
+location and survives app updates. Data never enters Git or a release build.
+
+For advanced command-line use, an explicitly passed ADF path bypasses the
+first-launch importer. Game saves and states also live under
+`~/Library/Application Support/Turrican II/` by default.
 
 ## Fullscreen and graphics
 

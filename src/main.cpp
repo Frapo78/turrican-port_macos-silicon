@@ -15,8 +15,8 @@
 #include <vector>
 
 #ifdef __APPLE__
-// Implemented with AppKit so Finder launch can prompt for an original ADF.
-std::string macos_select_adf();
+// Import the user-provided extended ADF into persistent app-owned data on first launch.
+std::string macos_load_or_import_adf();
 #endif
 
 namespace {
@@ -985,8 +985,8 @@ void usage() {
   fprintf(stderr,
           "usage: turrican2 [options] [disk.adf]\n"
           "  disk.adf         the original game disk (extended ADF)\n"
-          "                   (default: T2.adf in the current directory,\n"
-          "                   assets/ or the install data dir)\n"
+          "                   (macOS: first-launch import into Application Support;\n"
+          "                   others: current directory, assets/ or install data dir)\n"
           "  --scale N        window scale (default 3)\n"
           "  --save DIR       directory for the written disk\n"
           "                   (default: $XDG_DATA_HOME/turrican2)\n"
@@ -1039,14 +1039,17 @@ int main(int argc, char** argv) {
     else adf_path = a;
   }
   if (adf_path.empty()) {
+#ifdef __APPLE__
+    // Finder launches have no stable working directory: always use the
+    // persistent, app-owned imported disk, or ask the user once to import it.
+    adf_path = macos_load_or_import_adf();
+#else
     for (std::string cand : {std::string("."), std::string("assets"), std::string(T2_DATADIR)}) {
       std::string p = cand + "/T2.adf";
       if (std::filesystem::exists(p)) { adf_path = p; break; }
     }
-  }
-#ifdef __APPLE__
-  if (adf_path.empty()) adf_path = macos_select_adf();
 #endif
+  }
   if (adf_path.empty()) {
     fprintf(stderr, "Cannot find the game disk (T2.adf).\n");
     usage();
