@@ -65,3 +65,31 @@ reference and diagnostics. See `docs/native_port_architecture.md`.
 For a local MFM checksum and directory metadata analysis, use
 `python3 native/tools/inspect_adf.py /path/to/TurricanII.adf --deep`.
 This command never writes or uploads extracted game data.
+
+## Script stabile di compilazione e debug (M0)
+
+Lo script versionato `native/tools/TurricanII_native_dev.sh` è il punto
+di ingresso permanente. Sul Mac crea una sola volta un collegamento nella
+cartella di lavoro:
+
+```sh
+cd ~/APPS/TurricanII_silicon
+ln -sfn source/native/tools/TurricanII_native_dev.sh TurricanII_native_dev.sh
+bash TurricanII_native_dev.sh all
+```
+
+Modalità: `build` compila, testa, firma e crea lo ZIP; `test` esegue
+240 frame con SDL dummy e salva telemetria/BMP; `run` avvia la demo;
+`run --with-adf` prova l'identificazione tecnica locale; `diagnose`
+produce solo un report; `update` aggiorna **solo** il branch corrente con
+fast-forward e senza perdere modifiche locali. Nessun checkout implicito.
+
+File da condividere per segnalazioni:
+`~/APPS/TurricanII_silicon/native-diagnostics-latest.zip`.
+Contiene `runtime.log`, compilazione, test, librerie, firma e schermate
+senza file ADF. La `.app` autonoma di sviluppo è in
+`staging-native-dev/turrican2_native.app` e lo ZIP eseguibile in
+`Turrican-II-Native-dev-arm64.zip`. Firma ad hoc, non notarizzata.
+
+Premi F12 nella demo per salvare una schermata; lo stato di gioco
+viene registrato ogni 60 frame quando è usata l'opzione `--debug`.
