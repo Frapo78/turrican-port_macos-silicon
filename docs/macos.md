@@ -1,0 +1,102 @@
+> **Architecture notice:** This document describes the *current interim
+> emulator-based app*. The requested production port uses compiled native
+> game logic, Metal/audio/controller code, and **no ADF access after first-run
+> provisioning**. See [native-port architecture](native_port_architecture.md).
+> A successful ARM64 build here does not mean the game logic is native.
+>
+# macOS Apple Silicon port (work in progress)
+
+This fork follows [Grumbel/turrican-port](https://github.com/Grumbel/turrican-port)
+and keeps the upstream GPL-3.0-or-later license. The proprietary Turrican II
+game data is **not included**.
+
+## Build a native ARM64 macOS app
+
+Install the Apple command line developer tools and Homebrew, then:
+
+```sh
+brew install cmake sdl2-compat
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+cmake --build build --parallel
+file build/turrican2.app/Contents/MacOS/turrican2
+open build/turrican2.app
+```
+
+A user-provided Turrican II disk image is required. The importer supports
+standard and extended ADF containers; not every valid ADF contains a playable
+copy of this game's original data. No copyrighted game data is distributed.
+
+### First launch: native disk import
+
+On the first Finder launch, a standard macOS file-selection dialog asks for
+your Turrican II disk image. The importer accepts the formats already
+recognized by the disk engine: **standard 880 KiB ADF**, **old UAE extended
+ADF (`UAE--ADF`)** and **new UAE extended ADF (`UAE-1ADF`)**. It validates
+the container type and copies the file into the app-owned persistent location:
+
+```text
+~/Library/Application Support/Turrican II/T2.adf
+```
+
+**Important:** a valid ADF container is not proof that the contents are
+compatible with the project's current Turrican II boot/trackloader
+implementation. Some disk variants may still fail to boot, particularly
+standard ADF dumps that cannot preserve copy-protection track data.
+
+On later launches the saved copy is loaded automatically. The app asks for
+another file only if the copy is missing or invalid. Selecting *Cancel* leaves
+the original file untouched and exits without starting the game.
+
+**Why not write into `turrican2.app/Contents/Resources`?** The installed
+`.app` bundle may be read-only and changing it after signing invalidates its
+code signature. Application Support is the native macOS per-user app data
+location and survives app updates. Data never enters Git or a release build.
+
+For advanced command-line use, an explicitly passed ADF path bypasses the
+first-launch importer. Game saves and states also live under
+`~/Library/Application Support/Turrican II/` by default.
+
+## Fullscreen and graphics
+
+- The green macOS window button and **Control-Command-F** use a native macOS
+  fullscreen Space (SDL2 fullscreen Spaces).
+- **F11** and **Alt-Return** remain supported.
+- High-DPI/Retina rendering is enabled.
+- The **classic** framebuffer remains 320×256 with aspect-preserving scaling.
+  Fullscreen on a widescreen display therefore shows side margins instead
+  of distorting or cropping the original playfield.
+- **Extended 16:9 gameplay is not implemented yet.** It requires camera,
+  scrolling and playfield-renderer changes, not merely stretching the image.
+
+## Controller roadmap
+
+The current upstream SDL2 gamepad support is unchanged in this first step.
+Planned follow-up work: configurable DualShock 4 bindings for all exposed
+buttons; L2 to hold the surround beam, right stick for beam orientation
+(with gameplay-specific validation); controller hotplug/disconnect; and an
+in-game remapping menu. macOS may reserve the PS/Home button.
+
+## Build artifact limitations
+
+The GitHub Actions `turrican2-macos-arm64-dev` bundle is a **development
+build** linked to Homebrew SDL2/SDL3 libraries. Install
+`sdl2-compat` locally before running it. It is **not yet a portable,
+signed or notarized release**. A standalone distributable bundle is a
+later packaging step.
+
+Gameplay is still experimental upstream, and the CI build does not
+validate actual rendering or input without a user-provided ADF.
+
+## Boot diagnostics for incomplete loads
+
+Use `tools/macos/diagnose_boot.sh` after pulling this feature branch. It
+rebuilds the app using the existing local all-in-one builder (unless passed
+`--no-build`), runs a **bounded 650-frame test** with `--verbose` and
+`T2_BOOTDIAG=1`, and creates `bootdiag-latest.zip` under the existing
+`/Users/fra/APPS/TurricanII_silicon` workdir.
+
+The diagnostic ZIP contains emulator PC/frame/disk-DMA logs, dependency
+metadata, and low-resolution PPM frame captures. It does **not** contain the
+ADF or save files. If using a standard ADF, check whether the game is
+attempting a raw-track sync not available in sector dumps. Importing a valid
+ADF container does not imply the original game can boot from that version.
