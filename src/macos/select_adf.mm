@@ -1,20 +1,50 @@
 #import <AppKit/AppKit.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
 
 namespace {
 
-// The game requires an old-style UAE extended ADF, not a conventional ADF.
-// Checking before persistence avoids repeatedly loading an unusable image.
-bool is_extended_adf(NSURL* url) {
+// Keep this detection in sync with Disk::load in src/amiga/disk.cpp.
+// A normal 880 KiB ADF is supported by the disk reader, as are both UAE
+// extended ADF variants. The previous importer accidentally rejected two
+// of these three formats solely because they did not start with "UAE--ADF".
+enum class AdfFormat { unsupported, standard, extended_old, extended_new };
+
+AdfFormat detect_adf_format(NSURL* url) {
+  if (!url) return AdfFormat::unsupported;
+  NSFileManager* files = [NSFileManager defaultManager];
   NSError* error = nil;
+  NSDictionary* attrs = [files attributesOfItemAtPath:[url path] error:&error];
+  if (!attrs) return AdfFormat::unsupported;
+  const unsigned long long bytes = [attrs[NSFileSize] unsignedLongLongValue];
+
+  // Exact size of a standard double-density, 80-track Amiga ADF.
+  if (bytes == 901120ULL) return AdfFormat::standard;
+  if (bytes < 12) return AdfFormat::unsupported;
+
   NSFileHandle* handle = [NSFileHandle fileHandleForReadingFromURL:url error:&error];
-  if (!handle) return false;
-  NSData* header = [handle readDataOfLength:8];
+  if (!handle) return AdfFormat::unsupported;
+  NSData* data = [handle readDataOfLength:12];
   [handle closeFile];
-  return [header length] == 8 && std::memcmp([header bytes], "UAE--ADF", 8) == 0;
+  if ([data length] < 12) return AdfFormat::unsupported;
+  const auto* header = static_cast<const uint8_t*>([data bytes]);
+
+  // Original extended ADF: 8-byte magic + 160 x 4-byte track headers.
+  // The disk reader tolerates a truncated final track; do not reject it.
+  if (std::memcmp(header, "UAE--ADF", 8) == 0 &&
+      bytes >= 8ULL + 160ULL * 4ULL)
+    return AdfFormat::extended_old;
+
+  // New extended ADF: 12-byte header and N 12-byte track descriptors.
+  if (std::memcmp(header, "UAE-1ADF", 8) == 0) {
+    const unsigned tracks = (unsigned(header[10]) << 8) | unsigned(header[11]);
+    if (tracks > 0 && bytes >= 12ULL + 12ULL * tracks)
+      return AdfFormat::extended_new;
+  }
+  return AdfFormat::unsupported;
 }
 
 void show_import_error(NSString* summary, NSString* explanation) {
@@ -34,9 +64,8 @@ std::string path_string(NSURL* url) {
 }  // namespace
 
 // Import once to ~/Library/Application Support/Turrican II/T2.adf.
-// Deliberately NOT placed in the .app bundle: Finder-launched apps can live
-// in read-only locations and mutating a signed bundle invalidates its seal.
-// An app upgrade must not delete the user's original, imported disk image.
+// Do not write inside the .app bundle: it might be read-only and modifying a
+// signed bundle breaks its signature. This file persists across updates.
 std::string macos_load_or_import_adf() {
   @autoreleasepool {
     [NSApplication sharedApplication];
@@ -67,12 +96,14 @@ std::string macos_load_or_import_adf() {
     }
 
     NSURL* disk = [app_dir URLByAppendingPathComponent:@"T2.adf"];
-    if (is_extended_adf(disk)) return path_string(disk);
+    if (detect_adf_format(disk) != AdfFormat::unsupported)
+      return path_string(disk);
 
     NSOpenPanel* panel = [NSOpenPanel openPanel];
     [panel setTitle:@"Import Turrican II disk"];
-    [panel setMessage:@"Select your original Turrican II extended ADF. "
-                       "The app will store its own copy and won't ask again."];
+    [panel setMessage:@"Choose your Turrican II ADF disk image. "
+                       "Standard ADF and UAE extended ADF are accepted. "
+                       "The file will be copied into the app data directory."];
     [panel setCanChooseFiles:YES];
     [panel setCanChooseDirectories:NO];
     [panel setAllowsMultipleSelection:NO];
@@ -82,17 +113,19 @@ std::string macos_load_or_import_adf() {
     for (;;) {
       if ([panel runModal] != NSModalResponseOK) return {};
       NSURL* selected = [[panel URLs] firstObject];
-      if (!selected || !is_extended_adf(selected)) {
-        show_import_error(@"Invalid disk image",
-                          @"Turrican II requires an original extended ADF "
-                           "(UAE--ADF), not a standard ADF.");
+      if (detect_adf_format(selected) == AdfFormat::unsupported) {
+        show_import_error(@"Unsupported disk format",
+                          @"Choose a standard 880 KiB ADF or a UAE extended "
+                           "ADF (UAE--ADF / UAE-1ADF). Other disk formats "
+                           "would require additional support in the game engine.");
         continue;
       }
 
-      // Stage the copy in the same directory, then move into place. A failed
-      // or interrupted copy is not mistaken for a successfully imported disk.
+      // Stage the file and verify the COPY before replacing the imported
+      // image. An interrupted import must not look like a successful one.
       NSURL* temp = [app_dir URLByAppendingPathComponent:@"T2.adf.importing"];
-      if ([files fileExistsAtPath:[temp path]]) [files removeItemAtURL:temp error:nil];
+      if ([files fileExistsAtPath:[temp path]])
+        [files removeItemAtURL:temp error:nil];
 
       error = nil;
       if (![files copyItemAtURL:selected toURL:temp error:&error]) {
@@ -100,21 +133,21 @@ std::string macos_load_or_import_adf() {
                           [error localizedDescription]);
         continue;
       }
-      if (!is_extended_adf(temp)) {
+      if (detect_adf_format(temp) == AdfFormat::unsupported) {
         [files removeItemAtURL:temp error:nil];
-        show_import_error(@"Invalid imported disk",
-                          @"The disk copy did not pass validation. "
-                           "Please select a valid extended ADF.");
+        show_import_error(@"Imported disk could not be verified",
+                          @"The copied file is not a recognized ADF image. "
+                           "Your original file has not been modified.");
         continue;
       }
 
-      // An invalid previous import may exist. Do not overwrite a valid
-      // import, which would already have been returned above.
+      // An unrecognized previous import may exist; never replace a
+      // recognized persisted disk without an explicit re-import action.
       if ([files fileExistsAtPath:[disk path]]) {
         error = nil;
         if (![files removeItemAtURL:disk error:&error]) {
           [files removeItemAtURL:temp error:nil];
-          show_import_error(@"Cannot replace invalid disk",
+          show_import_error(@"Cannot replace unsupported disk",
                             [error localizedDescription]);
           continue;
         }
@@ -126,6 +159,8 @@ std::string macos_load_or_import_adf() {
                           [error localizedDescription]);
         continue;
       }
+      std::fprintf(stderr, "Imported Turrican II disk to %s\n",
+                   path_string(disk).c_str());
       return path_string(disk);
     }
   }

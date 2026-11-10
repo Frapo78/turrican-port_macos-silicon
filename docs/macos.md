@@ -22,8 +22,15 @@ game data is distributed in this repository.
 ### First launch: native disk import
 
 On the first Finder launch, a standard macOS file-selection dialog asks for
-your original `T2.adf`. It checks the **UAE--ADF** extended-ADF header, then
-copies the file into the app-owned persistent location:
+your Turrican II disk image. The importer accepts the formats already
+recognized by the disk engine: **standard 880 KiB ADF**, **old UAE extended
+ADF (`UAE--ADF`)** and **new UAE extended ADF (`UAE-1ADF`)**. It validates
+the container type and copies the file into the app-owned persistent location:
+
+**Important:** a valid ADF container is not proof that the contents are
+compatible with the project's current Turrican II boot/trackloader
+implementation. Some disk variants may still fail to boot, particularly
+standard ADF dumps that cannot preserve copy-protection track data.
 
 ```text
 ~/Library/Application Support/Turrican II/T2.adf
