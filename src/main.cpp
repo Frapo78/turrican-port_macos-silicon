@@ -14,6 +14,11 @@
 #include <string>
 #include <vector>
 
+#ifdef __APPLE__
+// Implemented with AppKit so Finder launch can prompt for an original ADF.
+std::string macos_select_adf();
+#endif
+
 namespace {
 
 // Scripted input for automated runs:  <frame> <command> [args]
@@ -601,15 +606,23 @@ public:
   std::string save_path_;
 
   bool init(int scale) {
+#ifdef __APPLE__
+    // Enable macOS native fullscreen Spaces (green titlebar button).
+    SDL_SetHint(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "1");
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) {
       fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
       return false;
     }
     // Window height ≈ 15/16 of the line count so 320×256 lores sits near 4:3;
     // logical size stays 320×256 and SDL letterboxes inside the window.
+    Uint32 window_flags = SDL_WINDOW_RESIZABLE;
+#ifdef __APPLE__
+    window_flags |= SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
     win = SDL_CreateWindow("Turrican II", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
                            amiga::FB_W * scale, amiga::VIEW_H * scale * 15 / 16,
-                           SDL_WINDOW_RESIZABLE);
+                           window_flags);
     if (!win) return false;
     ren = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
     if (!ren) ren = SDL_CreateRenderer(win, -1, 0);
@@ -645,8 +658,14 @@ public:
           bool down = e.type == SDL_KEYDOWN;
           SDL_Scancode sc = e.key.keysym.scancode;
           if (sc == SDL_SCANCODE_F12 && down) { set_grab(!mouse_grab); break; }
-          if ((sc == SDL_SCANCODE_F11 ||
-               (sc == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT))) && down) {
+          bool mac_fullscreen = false;
+#ifdef __APPLE__
+          // Standard macOS shortcut: Control-Command-F.
+          mac_fullscreen = sc == SDL_SCANCODE_F &&
+              (e.key.keysym.mod & KMOD_GUI) && (e.key.keysym.mod & KMOD_CTRL);
+#endif
+          if ((sc == SDL_SCANCODE_F11 || mac_fullscreen ||
+               (sc == SDL_SCANCODE_RETURN && (e.key.keysym.mod & KMOD_ALT))) && down && !e.key.repeat) {
             Uint32 fl = SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP;
             SDL_SetWindowFullscreen(win, fl ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
             break;
@@ -984,6 +1003,7 @@ void usage() {
           "  --script FILE    scripted input (see source)\n"
           "  --grab           capture the mouse at start (F12 toggles)\n"
           "keys: cursor keys/right Ctrl = joystick, F11/Alt-Enter fullscreen,\n"
+          "      macOS: Ctrl-Command-F or green window button,\n"
           "      Pause fast-forward; all other keys go to the game.\n"
           "pad:  left stick/D-pad = move, A = jump, Y = fire, X = auto-fire,\n"
           "      B = Space (powerline), Back = Esc, Start = debug menu.\n");
@@ -1024,6 +1044,9 @@ int main(int argc, char** argv) {
       if (std::filesystem::exists(p)) { adf_path = p; break; }
     }
   }
+#ifdef __APPLE__
+  if (adf_path.empty()) adf_path = macos_select_adf();
+#endif
   if (adf_path.empty()) {
     fprintf(stderr, "Cannot find the game disk (T2.adf).\n");
     usage();
@@ -1032,9 +1055,15 @@ int main(int argc, char** argv) {
   if (save_dir.empty()) {
     const char* xdg = getenv("XDG_DATA_HOME");
     const char* home = getenv("HOME");
+#ifdef __APPLE__
+    // Use the standard macOS per-user application data directory.
+    if (home) save_dir = std::string(home) + "/Library/Application Support/Turrican II";
+    else save_dir = ".";
+#else
     if (xdg && *xdg) save_dir = std::string(xdg) + "/turrican2";
     else if (home) save_dir = std::string(home) + "/.local/share/turrican2";
     else save_dir = ".";
+#endif
   }
 
   amiga::Machine machine;

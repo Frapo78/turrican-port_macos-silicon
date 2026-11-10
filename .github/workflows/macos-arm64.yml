@@ -1,0 +1,38 @@
+name: macOS Apple Silicon build
+
+on:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL2 compatibility library
+        run: brew install cmake sdl2-compat
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+      - name: Build
+        run: cmake --build build --parallel 3
+      - name: Verify native architecture and CLI
+        run: |
+          set -euxo pipefail
+          APP="build/turrican2.app/Contents/MacOS/turrican2"
+          test -x "$APP"
+          test "$(lipo -archs "$APP")" = arm64
+          "$APP" --help
+      - name: Upload development app (Homebrew dependencies required)
+        uses: actions/upload-artifact@v4
+        with:
+          name: turrican2-macos-arm64-dev
+          path: build/turrican2.app
+          if-no-files-found: error
