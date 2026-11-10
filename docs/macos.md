@@ -1,3 +1,9 @@
+> **Architecture notice:** This document describes the *current interim
+> emulator-based app*. The requested production port uses compiled native
+> game logic, Metal/audio/controller code, and **no ADF access after first-run
+> provisioning**. See [native-port architecture](native_port_architecture.md).
+> A successful ARM64 build here does not mean the game logic is native.
+>
 # macOS Apple Silicon port (work in progress)
 
 This fork follows [Grumbel/turrican-port](https://github.com/Grumbel/turrican-port)

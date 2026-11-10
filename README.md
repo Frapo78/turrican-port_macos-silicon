@@ -1,3 +1,14 @@
+> **macOS Apple Silicon fork:** The current executable is an ARM64 *host*
+> for an interpreted Amiga 68000 runtime. It is **not** yet a native game
+> reimplementation. The intended end product is an independent native
+> ARM64 engine that does not read an ADF during gameplay. See
+> [native port architecture](docs/native_port_architecture.md).
+>
+> An ADF can identify a supported copy technically, but cannot prove
+> legal ownership by itself. If original proprietary assets cannot be
+> redistributed, they must be prepared locally at first run rather
+> than bundled in releases.
+>
 # Turrican II – Amiga port to C++/SDL2
 
 Port of the Amiga version of **Turrican II: The Final Fight** (Factor 5 /
