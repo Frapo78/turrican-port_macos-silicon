@@ -43,6 +43,12 @@ bash /Users/fra/APPS/TurricanII_silicon/source/native/tools/build_macos_native.s
 bash /Users/fra/APPS/TurricanII_silicon/source/native/tools/build_macos_native.sh test
 ```
 
+The builder reuses the **classic SDL2** already compiled by the earlier
+all-in-one script, embeds the SDL2 dylib, verifies ARM64/signing and creates a
+**development-only ZIP** in the established workdir:
+`/Users/fra/APPS/TurricanII_silicon/Turrican-II-Native-M0-dev-arm64.zip`.
+No ADF or extracted game assets are included.
+
 `test` opens synthetic gameplay without asking for a disk. To exercise the
 one-time system picker, directly launch the `.app` without `--demo`. The
 current development app may still use locally installed SDL2 libraries and
