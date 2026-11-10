@@ -22,3 +22,25 @@ jobs:
       - name: Confirm no interpreted Amiga runtime symbols in native core
         run: |
           ! nm build-native-core/libt2_native_core.a | grep -E '(_ZN4m68k|_ZN5amiga)'
+  native-gui:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build-only SDL compatibility dependency
+        run: brew install cmake sdl2-compat
+      - name: Configure native SDL2 / AppKit target
+        run: >-
+          cmake -S native -B build-native-gui
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+          -DT2_NATIVE_WITH_SDL=ON -DT2_NATIVE_TESTS=OFF
+      - name: Compile AppKit native prototype
+        run: cmake --build build-native-gui --target turrican2_native --parallel 3
+      - name: Verify ARM64 binary and command line startup
+        run: |
+          BIN=build-native-gui/turrican2_native.app/Contents/MacOS/turrican2_native
+          test -x "$BIN"
+          lipo -verify_arch arm64 "$BIN"
+          "$BIN" --help
+      # This job is build-only. It does not bundle SDK libraries or create a
+      # release, and it never needs a copyrighted ADF in CI.
