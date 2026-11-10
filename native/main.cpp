@@ -75,7 +75,28 @@ void draw(SDL_Renderer* renderer, const Game& game, bool pressed_fire) {
   box(renderer, 15, 15, 180, 12, 34, 50, 70);
   box(renderer, 17, 17, 140, 8, 142, 224, 150);
   box(renderer, 15, 37, game.widescreen() ? 110 : 78, 5, 94, 135, 215);
-  SDL_RenderPresent(renderer);
+  // Present after optional screenshot capture from main.
+}
+bool capture_frame(SDL_Renderer* renderer, const std::string& path) {
+  int width = 0, height = 0;
+  if (SDL_GetRendererOutputSize(renderer, &width, &height) != 0 ||
+      width <= 0 || height <= 0 || width > 7680 || height > 4320) {
+    std::fprintf(stderr, "[native-debug] Screenshot rejected: %s\n", SDL_GetError());
+    return false;
+  }
+  SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, width, height, 32,
+                                                       SDL_PIXELFORMAT_ARGB8888);
+  if (!surface) {
+    std::fprintf(stderr, "[native-debug] Screenshot allocation: %s\n", SDL_GetError());
+    return false;
+  }
+  const int read = SDL_RenderReadPixels(renderer, nullptr, SDL_PIXELFORMAT_ARGB8888,
+                                       surface->pixels, surface->pitch);
+  const int saved = read == 0 ? SDL_SaveBMP(surface, path.c_str()) : -1;
+  if (read != 0 || saved != 0)
+    std::fprintf(stderr, "[native-debug] Screenshot failed: %s\n", SDL_GetError());
+  SDL_FreeSurface(surface);
+  return read == 0 && saved == 0;
 }
 SDL_GameController* first_controller() {
   for (int i = 0; i < SDL_NumJoysticks(); ++i)
@@ -85,13 +106,20 @@ SDL_GameController* first_controller() {
 }  // namespace
 int main(int argc, char** argv) {
   bool demo = false;
+  bool debug = false;
   int frames = -1;
+  int capture_every = 0;
+  std::string capture_dir;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "--demo") demo = true;
     else if (a == "--frames" && i+1 < argc) frames = std::atoi(argv[++i]);
+    else if (a == "--debug") debug = true;
+    else if (a == "--capture-dir" && i+1 < argc) capture_dir = argv[++i];
+    else if (a == "--capture-every" && i+1 < argc) capture_every = std::max(0, std::atoi(argv[++i]));
     else if (a == "--help") {
-      std::puts("turrican2_native [--demo] [--frames N]\n"
+      std::puts("turrican2_native [--demo] [--frames N] [--debug]\n"
+                "  --capture-dir DIR   F12 screenshots to DIR; --capture-every N periodic BMP frames\n"
                 "  --demo skips the one-time ADF identifier for testing\n"
                 "  F9 classic/16:9, Ctrl-Command-F fullscreen (macOS).\n"
                 "  PS4: left stick move, Cross jump, L2 beam, right stick aim.\n"
@@ -107,6 +135,10 @@ int main(int argc, char** argv) {
   // SDL2 uses its Metal backend where supported; software fallback remains.
   SDL_SetHint(SDL_HINT_RENDER_DRIVER, "metal");
 #endif
+  if (debug)
+    std::fprintf(stderr, "[native-debug] Start; onboarding=%s frame_limit=%d SDL=%d.%d.%d\n",
+                 demo ? "bypassed" : "enabled", frames,
+                 SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
   if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
@@ -118,11 +150,26 @@ int main(int argc, char** argv) {
   SDL_Renderer* r = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
   if (!r) r = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
   if (!r) { std::fprintf(stderr, "Renderer: %s\n", SDL_GetError()); SDL_DestroyWindow(win); SDL_Quit(); return 1; }
+  if (debug) {
+    SDL_RendererInfo info{};
+    SDL_version runtime{};
+    SDL_GetVersion(&runtime);
+    if (SDL_GetRendererInfo(r, &info) == 0)
+      std::fprintf(stderr, "[native-debug] Renderer=%s flags=0x%x SDL runtime=%u.%u.%u\n",
+                   info.name ? info.name : "unknown", info.flags,
+                   runtime.major, runtime.minor, runtime.patch);
+    std::fprintf(stderr, "[native-debug] Video driver=%s\n",
+                 SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "unknown");
+  }
   Game game;
   SDL_RenderSetLogicalSize(r, 960, 540);
   SDL_GameController* pad = first_controller();
   bool running = true;
+  bool screenshot_requested = false;
   int shown = 0;
+  const bool fixed_step_headless =
+      frames >= 0 && SDL_GetCurrentVideoDriver() &&
+      std::strcmp(SDL_GetCurrentVideoDriver(), "dummy") == 0;
   Uint64 last = SDL_GetPerformanceCounter();
   const double frequency = double(SDL_GetPerformanceFrequency());
   double accumulator = 0.;
@@ -138,9 +185,12 @@ int main(int argc, char** argv) {
       else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
         auto key = e.key.keysym.sym;
         if (key == SDLK_ESCAPE) running = false;
+        if (key == SDLK_F12) screenshot_requested = true;
         if (key == SDLK_F9) {
           game.set_widescreen(!game.widescreen());
           SDL_RenderSetLogicalSize(r, int(game.view_width()), 540);
+          if (debug) std::fprintf(stderr, "[native-debug] Viewport=%s at frame %d\n",
+                                  game.widescreen() ? "16:9" : "4:3", shown);
         }
         if (key == SDLK_f && (e.key.keysym.mod & KMOD_GUI) &&
             (e.key.keysym.mod & KMOD_CTRL)) {
@@ -173,7 +223,8 @@ int main(int argc, char** argv) {
       if (std::hypot(ax, ay) > .25f) input.aim = {ax, ay};
     }
     Uint64 now = SDL_GetPerformanceCounter();
-    accumulator += std::min(0.10, double(now - last) / frequency);
+    accumulator += fixed_step_headless ? (1. / 60.) :
+                   std::min(0.10, double(now - last) / frequency);
     last = now;
     int steps = 0;
     while (accumulator >= 1. / 60. && steps++ < 6) {
@@ -181,9 +232,34 @@ int main(int argc, char** argv) {
       accumulator -= 1./60.;
     }
     draw(r, game, input.fire);
+    const int next_frame = shown + 1;
+    const bool capture = screenshot_requested ||
+        (capture_every > 0 && next_frame % capture_every == 0);
+    if (capture && !capture_dir.empty()) {
+      const std::string output = capture_dir + "/frame-" +
+                                 std::to_string(next_frame) + ".bmp";
+      if (capture_frame(r, output) && debug)
+        std::fprintf(stderr, "[native-debug] Screenshot saved: %s\n", output.c_str());
+    }
+    screenshot_requested = false;
+    SDL_RenderPresent(r);
     ++shown;
+    if (debug && (shown == 1 || shown % 60 == 0)) {
+      const auto& p = game.player();
+      std::fprintf(stderr,
+        "[native-debug] frame=%d ticks=%llu pos=(%.1f,%.1f) "
+        "vel=(%.1f,%.1f) camera=%.1f viewport=%.0f beam=%d surround=%d\n",
+        shown, (unsigned long long)game.ticks(),
+        p.pos.x, p.pos.y, p.vel.x, p.vel.y,
+        game.camera_x(), game.view_width(),
+        int(game.beam_active()), int(game.surround_active()));
+      std::fflush(stderr);
+    }
     SDL_Delay(1);
   }
+  if (debug)
+    std::fprintf(stderr, "[native-debug] Quit; frames=%d ticks=%llu\n",
+                 shown, (unsigned long long)game.ticks());
   if (pad) SDL_GameControllerClose(pad);
   SDL_DestroyRenderer(r);
   SDL_DestroyWindow(win);
