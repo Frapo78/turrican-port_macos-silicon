@@ -55,3 +55,7 @@ the same digest. No native Turrican II levels or sprites are implemented.
 No game disk/asset files are committed. Runtime gameplay uses only compiled
 C++ code and synthetic geometry. The old emulator remains separate for
 reference and diagnostics. See `docs/native_port_architecture.md`.
+
+For a local MFM checksum and directory metadata analysis, use
+`python3 native/tools/inspect_adf.py /path/to/TurricanII.adf --deep`.
+This command never writes or uploads extracted game data.

@@ -18,6 +18,13 @@ locally using Python and its track header table.
 
 This layout is consistent with the original project's documented
 trackloader, but it is **not proof that every level of this dump works**.
+All 158 custom MFM tracks were decoded in memory for an integrity check:
+**only track 159 has a failing checksum**. Tracks 2 through 158 pass.
+The on-disk directory contains **30 named entries**, including the native
+porting targets `RA-I`, `MAIN`, `INTR`, `MUS0`–`MUS5`, and stages `L1-1`
+through `L5-2`. These are directory **names and lengths only**; the
+repository does not contain extracted binaries or level assets.
+
 The file name indicates a bad dump, and the declared size mismatch is real.
 The program intentionally allows the small final-track discrepancy during
 technical identification, without silently claiming it has repaired the
@@ -44,7 +51,7 @@ software, so no code from it is used for this game analysis.
 ## Reproduce locally
 
 ```bash
-python3 native/tools/inspect_adf.py '/path/to/your/Turrican II.adf'
+python3 native/tools/inspect_adf.py '/path/to/your/Turrican II.adf' --deep
 ```
 
 The tool displays only format and hash metadata. Never put an ADF or
