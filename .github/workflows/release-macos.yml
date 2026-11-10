@@ -1,0 +1,129 @@
+name: Release macOS Apple Silicon ZIP
+
+# The first alpha ships from the feature branch, without merging the draft PR.
+# This is deliberately scoped to this workflow file so ordinary pushes cannot
+# unintentionally publish additional releases.
+on:
+  push:
+    branches:
+      - feature/macos-arm64-app-fullscreen
+    paths:
+      - .github/workflows/release-macos.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package-and-release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native build and deployment tools
+        run: brew install cmake sdl2-compat dylibbundler
+
+      - name: Configure Apple Silicon Release
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+
+      - name: Build
+        run: cmake --build build --parallel 3
+
+      - name: Bundle SDL runtime and verify ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="build/turrican2.app"
+          BIN="$APP/Contents/MacOS/turrican2"
+          test -x "$BIN"
+          lipo -verify_arch arm64 "$BIN"
+          dylibbundler -od -b -x "$BIN" -d "$APP/Contents/Frameworks" -p "@executable_path/../Frameworks/"
+          otool -L "$BIN"
+
+          # Neither the executable nor the bundled libraries may depend on
+          # Homebrew paths from the CI runner.
+          if otool -L "$BIN" | grep -E '/opt/homebrew|/usr/local|@rpath'; then
+            echo "Unbundled executable runtime dependency" >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          libs=("$APP"/Contents/Frameworks/*.dylib)
+          if (( ${#libs[@]} == 0 )); then
+            echo "No SDL runtime libraries were bundled" >&2
+            exit 1
+          fi
+          for lib in "${libs[@]}"; do
+            lipo -verify_arch arm64 "$lib"
+            otool -L "$lib"
+            if otool -L "$lib" | grep -E '/opt/homebrew|/usr/local|@rpath'; then
+              echo "Unbundled runtime dependency in $lib" >&2
+              exit 1
+            fi
+            codesign --force --sign - "$lib"
+          done
+
+          # Include the GPL with the distributed application.
+          mkdir -p "$APP/Contents/Resources"
+          cp LICENSES/GPL-3.0-or-later.txt "$APP/Contents/Resources/GPL-3.0-or-later.txt"
+          codesign --force --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          "$BIN" --help
+
+      - name: Make ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="v0.1.0-alpha.1"
+          ZIP="Turrican-II-macOS-Apple-Silicon-${VERSION}.zip"
+          ditto -c -k --keepParent --sequesterRsrc build/turrican2.app "$ZIP"
+          unzip -l "$ZIP" | grep -F 'turrican2.app/Contents/MacOS/turrican2'
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          echo "RELEASE_ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Publish first prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v0.1.0-alpha.1"
+          cat > release-notes.md <<'NOTES'
+          ## Turrican II for macOS Apple Silicon — first alpha
+
+          - Native ARM64 `turrican2.app` for Apple Silicon.
+          - Native macOS fullscreen Space, Retina window support.
+          - On first launch, macOS asks you to import your own **original extended T2.adf**.
+          - The disk is copied to `~/Library/Application Support/Turrican II/T2.adf` and reused on later launches.
+          - SDL runtime libraries bundled; Homebrew is not required to run this ZIP.
+          - GPLv3+ application source is available in this repository.
+
+          **Alpha limitations:** gameplay remains experimental upstream; the
+          DualShock 4 remapping, L2 beam controls, and true extended widescreen
+          are not implemented in this version. This app is ad-hoc signed, **not
+          notarized**, so macOS Gatekeeper may require manually approving the app.
+          The game data is copyrighted and is not included.
+          NOTES
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$RELEASE_ZIP" "$RELEASE_ZIP.sha256" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" "$RELEASE_ZIP" "$RELEASE_ZIP.sha256" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Turrican II macOS ARM64 — first alpha" \
+              --prerelease \
+              --notes-file release-notes.md
+          fi
+
+      - name: Upload ZIP as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: turrican2-macos-arm64-release-zip
+          path: |
+            Turrican-II-macOS-Apple-Silicon-v0.1.0-alpha.1.zip
+            Turrican-II-macOS-Apple-Silicon-v0.1.0-alpha.1.zip.sha256
+          if-no-files-found: error
