@@ -1,0 +1,24 @@
+name: Independent native C++20 core
+on:
+  push:
+    branches:
+      - 'feature/native-engine-*'
+  pull_request:
+  workflow_dispatch:
+jobs:
+  core-no-emulator:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure isolated native core without SDL, ADF or 68000 runtime
+        run: >-
+          cmake -S native -B build-native-core
+          -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+          -DT2_NATIVE_WITH_SDL=OFF -DT2_NATIVE_TESTS=ON
+      - name: Compile native ARM64 gameplay logic
+        run: cmake --build build-native-core --parallel 3
+      - name: Verify core unit tests
+        run: ctest --test-dir build-native-core --output-on-failure
+      - name: Confirm no interpreted Amiga runtime symbols in native core
+        run: |
+          ! nm build-native-core/libt2_native_core.a | grep -E '(_ZN4m68k|_ZN5amiga)'

@@ -77,3 +77,8 @@ if(APPLE)
 else()
   install(TARGETS turrican2 RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+
+# Separate, 68000-free C++20 native prototype (not yet the original game).
+# Target turrican2_native intentionally links no amiga/m68k libraries.
+enable_testing()
+add_subdirectory(native)
