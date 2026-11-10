@@ -1,3 +1,26 @@
+## macOS Apple Silicon fork — native engine (product priority)
+
+- [ ] Implement a **separate production game engine** compiled to native
+      ARM64 C++20 (no interpreted 68000 instructions or Amiga hardware
+      emulation in the gameplay path).
+- [ ] Synthetic-asset boot, gameplay loop and test target, independent of
+      an ADF and safe for public CI.
+- [ ] One-time native ADF edition identification and local asset provisioning
+      when proprietary assets cannot be redistributed; **no ADF reads
+      after onboarding**.
+- [ ] Native Metal rendering/audio, 16:9 extended camera and remappable
+      DualShock 4 controls including directional beam (L2).
+- [ ] Complete gameplay parity, self-contained signed macOS distribution.
+- [ ] Preserve GPL source notices; never ship proprietary game data.
+
+Detailed scope, milestones and acceptance criteria:
+[docs/native_port_architecture.md](docs/native_port_architecture.md).
+
+**Legacy interpreter and boot diagnostics below are reference tools only,
+not the target macOS product.**
+
+---
+
 # TODO
 
 ## Works

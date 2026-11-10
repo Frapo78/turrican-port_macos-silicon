@@ -1,3 +1,9 @@
+> **Architecture notice:** This document describes the *current interim
+> emulator-based app*. The requested production port uses compiled native
+> game logic, Metal/audio/controller code, and **no ADF access after first-run
+> provisioning**. See [native-port architecture](native_port_architecture.md).
+> A successful ARM64 build here does not mean the game logic is native.
+>
 # macOS Apple Silicon port (work in progress)
 
 This fork follows [Grumbel/turrican-port](https://github.com/Grumbel/turrican-port)
@@ -80,3 +86,17 @@ later packaging step.
 
 Gameplay is still experimental upstream, and the CI build does not
 validate actual rendering or input without a user-provided ADF.
+
+## Boot diagnostics for incomplete loads
+
+Use `tools/macos/diagnose_boot.sh` after pulling this feature branch. It
+rebuilds the app using the existing local all-in-one builder (unless passed
+`--no-build`), runs a **bounded 650-frame test** with `--verbose` and
+`T2_BOOTDIAG=1`, and creates `bootdiag-latest.zip` under the existing
+`/Users/fra/APPS/TurricanII_silicon` workdir.
+
+The diagnostic ZIP contains emulator PC/frame/disk-DMA logs, dependency
+metadata, and low-resolution PPM frame captures. It does **not** contain the
+ADF or save files. If using a standard ADF, check whether the game is
+attempting a raw-track sync not available in sector dumps. Importing a valid
+ADF container does not imply the original game can boot from that version.
