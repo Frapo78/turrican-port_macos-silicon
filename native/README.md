@@ -93,3 +93,23 @@ senza file ADF. La `.app` autonoma di sviluppo è in
 
 Premi F12 nella demo per salvare una schermata; lo stato di gioco
 viene registrato ogni 60 frame quando è usata l'opzione `--debug`.
+
+
+### Git fetch in checkout a ramo singolo
+
+Alcuni clone locali scaricano il ramo richiesto in `FETCH_HEAD` senza
+creare `origin/<ramo>`. Se il comando
+`git merge --ff-only origin/feature/native-engine-m0-continuation`
+fallisce con "non è qualcosa di cui possiamo eseguire il merge",
+eseguire, **sullo stesso checkout e dopo il fetch riuscito**:
+
+```sh
+git -C "$HOME/APPS/TurricanII_silicon/source" merge --ff-only FETCH_HEAD
+test -f "$HOME/APPS/TurricanII_silicon/source/native/tools/TurricanII_native_dev.sh"
+ln -sfn source/native/tools/TurricanII_native_dev.sh "$HOME/APPS/TurricanII_silicon/TurricanII_native_dev.sh"
+bash "$HOME/APPS/TurricanII_silicon/TurricanII_native_dev.sh" all
+```
+
+Il comando `update` usa direttamente `FETCH_HEAD` dopo un fetch esplicito
+del ramo attualmente aperto. Non effettua reset o cambi di branch e
+rifiuta di aggiornare se ci sono modifiche locali.

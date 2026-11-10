@@ -187,8 +187,11 @@ if [[ "$MODE" == update ]]; then
   [[ -z "$(git -C "$SRC" status --porcelain)" ]] || fail "Modifiche locali: non aggiorno."
   CUR="$(git -C "$SRC" branch --show-current)"
   [[ -n "$CUR" ]] || fail 'Detached HEAD, niente aggiornamento.'
-  logged fetch git -C "$SRC" fetch origin "$CUR"
-  logged fast-forward git -C "$SRC" merge --ff-only "origin/$CUR"
+  # Single-branch clones and nonstandard fetch refspecs may not create
+  # refs/remotes/origin/$CUR. FETCH_HEAD always points to this explicit fetch.
+  # Do not change or reset the user's current working branch.
+  logged fetch git -C "$SRC" fetch origin "refs/heads/$CUR"
+  logged fast-forward git -C "$SRC" merge --ff-only FETCH_HEAD
 fi
 if [[ "$MODE" == test || "$MODE" == all ]]; then
   ensure_app
