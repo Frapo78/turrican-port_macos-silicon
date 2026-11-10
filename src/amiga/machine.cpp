@@ -115,12 +115,34 @@ uint32_t Machine::avail(bool chip, bool largest, bool fast) const {
 bool Machine::boot(const std::string& adf_path, const std::string& save_path) {
   if (!disk.load(adf_path, save_path)) return false;
   const auto& img = disk.image();
+  if (bootdiag_) {
+    unsigned custom_tracks = 0;
+    unsigned turrican_sync_tracks = 0;
+    for (int t = 0; t < Disk::NUM_TRACKS; ++t) {
+      const auto* track = disk.raw_track(t);
+      if (track && track->sync != 0x4489) {
+        ++custom_tracks;
+        if (track->sync == 0x9521) ++turrican_sync_tracks;
+      }
+    }
+    log("[bootdiag] disk: source=%s custom_tracks=%u sync_9521_tracks=%u "
+        "AmigaDOS_root=%d boot_DOS=%d\n",
+        adf_path.c_str(), custom_tracks, turrican_sync_tracks,
+        int(disk.is_dos()), int(std::memcmp(img.data(), "DOS", 3) == 0));
+    if (!custom_tracks)
+      log("[bootdiag] WARNING: no custom raw-MFM tracks found. A standard "
+          "ADF cannot preserve the original protected Turrican II tracks; "
+          "some alternate versions may use a different loader.\n");
+  }
   if (std::memcmp(img.data(), "DOS", 3) != 0) {
     log("%s: not a bootable disk\n", adf_path.c_str());
     return false;
   }
   if (!coverage_path.empty()) executed_.assign(CHIP_SIZE, 0);
   hle_->boot();
+  if (bootdiag_)
+    log("[bootdiag] CPU start: pc=%06x supervisor=%d cycles=%lld\n",
+        cpu.pc, int(cpu.s), (long long)cpu.cycles);
   return true;
 }
 
@@ -267,6 +289,19 @@ void Machine::end_of_frame() {
   if (!frame_rect_.empty()) display_rect_ = frame_rect_;
   frame_rect_ = DisplayRect{};
   ++frame_count_;
+  if (bootdiag_ && (frame_count_ == 1 || frame_count_ % 50 == 0)) {
+    log("[bootdiag] frame=%llu pc=%06x op_pc=%06x stopped=%d "
+        "cyl=%d side=%d dsklen=%04x dsksync=%04x "
+        "dma_attempts=%llu dma_misses=%llu last_track=%d last_sync=%04x "
+        "dmacon=%04x bplcon0=%04x cop1=%06x intena=%04x intreq=%04x\n",
+        (unsigned long long)frame_count_, cpu.pc, cpu.op_pc, int(cpu.stopped),
+        cyl_, side_, cs_.dsklen_, cs_.dsksync_,
+        (unsigned long long)disk_dma_attempts_,
+        (unsigned long long)disk_dma_misses_,
+        last_dma_track_, last_dma_sync_,
+        cs_.dmacon_, cs_.bplcon0_, cs_.cop1lc_,
+        cs_.intena_, cs_.intreq_);
+  }
   if (ram_hash_every > 0 && frame_count_ % uint64_t(ram_hash_every) == 0) {
     uint64_t h = 1469598103934665603ull;
     for (uint8_t b : chip_) h = (h ^ b) * 1099511628211ull;

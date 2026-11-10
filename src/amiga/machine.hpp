@@ -160,6 +160,7 @@ public:
   m68k::Cpu cpu;
   bool trace = false;
   bool verbose = false;
+  bool bootdiag_ = getenv("T2_BOOTDIAG") != nullptr;
   bool blitlog_ = getenv("T2_BLITLOG") != nullptr;  // debugging
   bool audlog_ = getenv("T2_AUDLOG") != nullptr;    // debugging
   uint64_t audlog_from_ = audlog_ ? strtoull(getenv("T2_AUDLOG"), nullptr, 10) : 0;
@@ -291,6 +292,10 @@ private:
   int cyl_ = 0;
   int side_ = 0;
   bool motor_ = false;
+  uint64_t disk_dma_attempts_ = 0;
+  uint64_t disk_dma_misses_ = 0;
+  int last_dma_track_ = -1;
+  uint16_t last_dma_sync_ = 0;
   // keyboard: raw key events waiting to be shifted into CIA-A SDR
   std::deque<uint8_t> key_queue_;
   int key_hold_lines_ = 0;

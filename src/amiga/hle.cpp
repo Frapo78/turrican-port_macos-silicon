@@ -214,9 +214,11 @@ void Hle::boot() {
   m.cs_.intena_ = INT_INTEN | INT_PORTS | INT_VERTB | INT_EXTER | INT_SOFT;
 
   if (m.disk.is_dos()) {
+    if (m.bootdiag_) m.log("[bootdiag] boot path: AmigaDOS startup sequence\n");
     boot_dos();
     return;
   }
+  if (m.bootdiag_) m.log("[bootdiag] boot path: direct bootblock\n");
 
   // strap: read the bootblock into chip RAM (checksum and "DOS" tag are
   // valid on the original disk).
@@ -244,7 +246,8 @@ void Hle::boot_done() {
     m.log("bootblock failed (d0=%d)\n", int(D(0)));
     throw QuitRequested{};
   }
-  if (m.verbose) m.log("[boot] bootblock done, entering %06x\n", A(0));
+  if (m.verbose || m.bootdiag_)
+    m.log("[boot] bootblock done, entering %06x\n", A(0));
   m.cpu.push32(ret_stub);
   m.cpu.a[6] = libs_[LIB_EXEC];
   m.cpu.pc = A(0);

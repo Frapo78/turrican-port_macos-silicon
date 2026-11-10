@@ -130,7 +130,10 @@ void Machine::disk_dma() {
   uint32_t words = cs_.dsklen_ & 0x3FFF;
   bool write = cs_.dsklen_ & 0x4000;
   int track = cyl_ * 2 + side_;
-  if (verbose)
+  ++disk_dma_attempts_;
+  last_dma_track_ = track;
+  last_dma_sync_ = cs_.dsksync_;
+  if (verbose || bootdiag_)
     log("[disk] DMA %s %u words at %06x track %d sync %04x adkcon %04x\n",
         write ? "write" : "read", words, cs_.dskpt_, track, cs_.dsksync_, cs_.adkcon_);
   if (write) {
@@ -141,7 +144,9 @@ void Machine::disk_dma() {
     if (!rt || (sync && rt->sync != cs_.dsksync_)) {
       // No matching sync mark on this track: the DMA never starts and the
       // trackloader runs into its timeout.
-      log("[disk] no sync %04x on track %d\n", cs_.dsksync_, track);
+      ++disk_dma_misses_;
+      log("[disk] no sync %04x on track %d (request %llu)\n",
+          cs_.dsksync_, track, (unsigned long long)disk_dma_attempts_);
       return;
     }
     size_t n = rt->data.size();

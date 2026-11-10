@@ -80,3 +80,17 @@ later packaging step.
 
 Gameplay is still experimental upstream, and the CI build does not
 validate actual rendering or input without a user-provided ADF.
+
+## Boot diagnostics for incomplete loads
+
+Use `tools/macos/diagnose_boot.sh` after pulling this feature branch. It
+rebuilds the app using the existing local all-in-one builder (unless passed
+`--no-build`), runs a **bounded 650-frame test** with `--verbose` and
+`T2_BOOTDIAG=1`, and creates `bootdiag-latest.zip` under the existing
+`/Users/fra/APPS/TurricanII_silicon` workdir.
+
+The diagnostic ZIP contains emulator PC/frame/disk-DMA logs, dependency
+metadata, and low-resolution PPM frame captures. It does **not** contain the
+ADF or save files. If using a standard ADF, check whether the game is
+attempting a raw-track sync not available in sector dumps. Importing a valid
+ADF container does not imply the original game can boot from that version.
