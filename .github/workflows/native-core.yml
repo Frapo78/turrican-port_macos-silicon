@@ -10,6 +10,8 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - name: Validate native diagnostic script syntax
+        run: bash -n native/tools/TurricanII_native_dev.sh
       - name: Configure isolated native core without SDL, ADF or 68000 runtime
         run: >-
           cmake -S native -B build-native-core
@@ -40,7 +42,7 @@ jobs:
         run: |
           BIN=build-native-gui/turrican2_native.app/Contents/MacOS/turrican2_native
           test -x "$BIN"
-          lipo -verify_arch arm64 "$BIN"
+          lipo "$BIN" -verify_arch arm64
           "$BIN" --help
       # This job is build-only. It does not bundle SDK libraries or create a
       # release, and it never needs a copyrighted ADF in CI.

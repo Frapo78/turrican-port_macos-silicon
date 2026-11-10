@@ -13,7 +13,7 @@ SDL_SRC="$WORK/deps/SDL2-$SDL_VERSION"
 MODE="${1:-all}"
 ZIP="$WORK/Turrican-II-Native-dev-arm64.zip"
 mkdir -p "$WORK" "$WORK/logs" "$STAGING"
-LOG="$WORK/logs/native-$(date +%Y%m%d-%H%M%S)-$"
+LOG="$WORK/logs/native-$(date +%Y%m%d-%H%M%S)-${BASHPID}"
 mkdir -p "$LOG/screenshots" "$LOG/crashes"
 touch "$LOG/started.marker"
 APP="$STAGING/turrican2_native.app"
@@ -39,7 +39,7 @@ Diagnostica: native-diagnostics-latest.zip
 HELP
 }
 if [[ "$MODE" == help || "$MODE" == -h || "$MODE" == --help ]]; then cat_help; exit 0; fi
-case "$MODE" in all|build|test|run|diagnose|update|identify) ;; *) echo "Modalità sconosciuta: $MODE" >&2; exit 2;; esac
+case "$MODE" in all|build|test|run|diagnose|update) ;; *) echo "Modalità sconosciuta: $MODE" >&2; exit 2;; esac
 shift || :
 WITH_ADF=0; RUN_FRAMES=0; CAPTURE_EVERY=120
 while (($#)); do
@@ -132,7 +132,7 @@ if [[ "$MODE" == "build" || "$MODE" == "all" ]]; then
   logged unit-tests ctest --test-dir "$BUILD" --output-on-failure
   BUNDLE="$BUILD/turrican2_native.app"
   test -x "$BUNDLE/Contents/MacOS/turrican2_native" || fail "App target missing"
-  lipo -verify_arch arm64 "$BUNDLE/Contents/MacOS/turrican2_native" || fail "Not arm64"
+  lipo "$BUNDLE/Contents/MacOS/turrican2_native" -verify_arch arm64 || fail "Not arm64"
   rm -rf "$APP" # only our own staged dev app
   ditto "$BUNDLE" "$APP"
   mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/Resources"
@@ -144,7 +144,7 @@ if [[ "$MODE" == "build" || "$MODE" == "all" ]]; then
   while IFS= read -r lib; do
     [[ -n "$lib" ]] || continue
     install_name_tool -change "$lib" '@executable_path/../Frameworks/libSDL2-2.0.0.dylib' "$BIN"
-    ((count+=1))
+    count=$((count + 1))
   done < <(otool -L "$BIN" | awk '$1 ~ /libSDL2(-2\.0\.0)?\.dylib/ {print $1}')
   (( count > 0 )) || fail "SDL2 dylib dependency not located"
   if [[ -f "$SRC/LICENSES/GPL-3.0-or-later.txt" ]]; then cp "$SRC/LICENSES/GPL-3.0-or-later.txt" "$APP/Contents/Resources/GPL-3.0-or-later.txt"; fi
@@ -165,7 +165,7 @@ if [[ "$MODE" == "build" || "$MODE" == "all" ]]; then
   if otool -L "$BIN" "$BUNDLED" | grep -E 'SDL3|/opt/homebrew|/usr/local'; then
     fail "Unexpected SDL3 or Homebrew runtime dependency"
   fi
-  lipo -verify_arch arm64 "$BUNDLED" || fail "SDL2 dylib not ARM64"
+  lipo "$BUNDLED" -verify_arch arm64 || fail "SDL2 dylib not ARM64"
   if find "$APP" -type f \( -iname '*.adf' -o -iname '*.ipf' \) | grep -q .; then
     fail "Refusing to package original game data"
   fi
@@ -199,7 +199,7 @@ fi
 if [[ "$MODE" == run || "$MODE" == all ]]; then
   ensure_app
   args=(--debug --capture-dir "$LOG/screenshots")
-  (( WITH_ADF == 0 )) && args=(--demo "${args[@]}")
+  if (( WITH_ADF == 0 )); then args=(--demo "${args[@]}"); fi
   (( RUN_FRAMES == 0 )) || args+=(--frames "$RUN_FRAMES" --capture-every "$CAPTURE_EVERY")
   report 'Avvio demo interattiva; Esc chiude, F9 cambia formato, F12 screenshot.'
   logged runtime "$BIN" "${args[@]}"

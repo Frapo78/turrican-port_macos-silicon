@@ -50,7 +50,7 @@ if [[ "$MODE" == "build" || "$MODE" == "all" ]]; then
   ctest --test-dir "$BUILD" -R t2_native_core --output-on-failure > "$LOG/test.log" 2>&1 || fail "Unit tests failed"
   BUNDLE="$BUILD/native/turrican2_native.app"
   test -x "$BUNDLE/Contents/MacOS/turrican2_native" || fail "App target missing"
-  lipo -verify_arch arm64 "$BUNDLE/Contents/MacOS/turrican2_native" || fail "Not arm64"
+  lipo "$BUNDLE/Contents/MacOS/turrican2_native" -verify_arch arm64 || fail "Not arm64"
   rm -rf "$APP" # only our own staged dev app
   ditto "$BUNDLE" "$APP"
   mkdir -p "$APP/Contents/Frameworks" "$APP/Contents/Resources"
@@ -83,7 +83,7 @@ if [[ "$MODE" == "build" || "$MODE" == "all" ]]; then
   if otool -L "$BIN" "$BUNDLED" | grep -E 'SDL3|/opt/homebrew|/usr/local'; then
     fail "Unexpected SDL3 or Homebrew runtime dependency"
   fi
-  lipo -verify_arch arm64 "$BUNDLED" || fail "SDL2 dylib not ARM64"
+  lipo "$BUNDLED" -verify_arch arm64 || fail "SDL2 dylib not ARM64"
   if find "$APP" -type f \( -iname '*.adf' -o -iname '*.ipf' \) | grep -q .; then
     fail "Refusing to package original game data"
   fi
